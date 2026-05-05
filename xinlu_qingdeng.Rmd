@@ -1129,3 +1129,85 @@ tukey_res
 We test for differences in the average log_area across all months using a one-way ANOVA and then apply the Tukey multiple comparisons method at the 95% global confidence level to compare all possible month pairs. From the ANOVA result, the p-value is 0.342, which is much larger than 0.05, so we fail to reject the null hypothesis. This means there is no overall evidence that the average fire size differs across months. Looking at the Tukey multiple comparisons results, we see that all adjusted p-values are very large (almost all close to 1), and every confidence interval includes zero. This confirms that none of the month-to-month differences are statistically significant.
 
 Compared to doing pairwise comparisons without any correction, the Tukey method is more reliable because it controls the overall Type I error rate when making many comparisons. Without this adjustment, we could incorrectly find some differences to be significant just due to random chance. In contrast, Tukey’s method shows that once we properly account for multiple testing, there are no meaningful differences between any month pairs. Overall, both the ANOVA and the Tukey results consistently indicate that month does not have a significant effect on log_area, and any observed differences are likely due to random variation rather than real patterns in the data.
+
+## multiple linear model 
+
+```{r}
+## Full multiple linear model (all covariates)
+fit_full = lm(log_area ~ X + Y + FFMC + DMC + DC + ISI + temp + RH + wind + month + day,
+              data = df_trans)
+
+summary(fit_full)
+
+```
+
+```{r}
+## ANOVA table (global testing perspective)
+anova(fit_full)
+```
+
+We fit a full multiple linear regression model using all available quantitative and qualitative covariates to explain log_area. To check whether at least one variable has a significant effect, we use the global F-test from the model summary. The p-value for the F-test is about 0.0805, which is greater than 0.05, so we fail to reject the null hypothesis at the 5% level. This means that overall, the model does not provide strong evidence that at least one predictor is statistically significant, although it is kind of borderline at the 10% level.
+
+Looking at the individual coefficients, we can see that DMC is highly significant and DC is also significant, which suggests that some predictors do have effects on log_area when considered individually. However, the global test is more strict since it tests all variables together, and the overall result is still not strong enough to be considered significant at the 0.05 level.
+
+We also compare this with the ANOVA table, which provides another way to assess significance. The ANOVA results show that the variable month is statistically significant (p = 0.0277), while most other variables are not. So unlike the global F-test, the ANOVA suggests that at least one variable (month) does have a significant effect.
+
+Overall, the two methods give slightly different conclusions. The global F-test suggests no strong overall significance, while the ANOVA highlights that certain variables like month may still be important. This difference happens because the global test evaluates all variables together, while ANOVA looks at each variable’s contribution separately.
+
+## Multiple testing methods 
+```{r}
+## Part 14: Multiple testing corrections
+
+alpha = 0.05
+
+fit_full = lm(log_area ~ X + Y + FFMC + DMC + DC + ISI + temp + RH + wind + month + day,
+              data = df_trans)
+
+pvalues = summary(fit_full)$coefficients[-1, 4]
+m = length(pvalues)
+
+## No correction
+No_Correction = pvalues
+
+## Holm-Bonferroni (FWER control)
+HB = p.adjust(pvalues, "holm")
+
+## Benjamini-Hochberg (FDR control)
+BH = p.adjust(pvalues, "BH")
+```
+
+
+```{r}
+testing_table = data.frame(
+  Effect = names(pvalues),
+  No_Correction = No_Correction,
+  Holm_Bonferroni = HB,
+  Benjamini_Hochberg = BH
+)
+
+testing_table[,2:4] = round(testing_table[,2:4], 4)
+
+print(testing_table)
+```
+From the table, we can see how the significance of variables changes once we apply multiple testing corrections. Without any correction, both DMC (p = 0.0009) and DC (p = 0.0137) look statistically significant at the 5% level. However, after applying the Holm-Bonferroni method, only DMC remains significant (p = 0.0224), while DC is no longer significant. The Benjamini-Hochberg (BH) method gives a similar result, where DMC is still significant, but DC again becomes non-significant. All other variables have large p-values across all methods, so they are clearly not significant. Overall, Holm is more strict since it controls the chance of any false positives, while BH is a bit more flexible, but in this case both methods agree that only DMC has a reliable effect on the response. This suggests that most predictors do not have strong evidence of association with log_area, and the signal in this dataset is pretty weak overall.
+```{r}
+## Clean table
+
+sum(No_Correction < alpha)
+sum(HB < alpha)
+sum(BH < alpha)
+```
+
+From the results, we can see that without any correction there are 2 variables that appear statistically significant at the 5% level. However, after applying the Holm-Bonferroni method, only 1 variable remains significant, and the same happens for the Benjamini-Hochberg method. This shows that once we control for multiple testing, some of the originally “significant” results were likely false positives. The Holm method is more conservative since it controls the probability of making any Type I error, while BH controls the proportion of false discoveries, but in this case both methods agree and reduce the number of significant variables to just one. Overall, this suggests that the evidence for most predictors is weak, and only one variable has a reliable effect on the response after accounting for multiple comparisons.
+
+## Final Model 
+
+Taking all the previous analyses together, the final model should be based on the log-transformed response (log_area) since earlier diagnostic plots showed strong right skewness and the transformation improved residual behavior. From the mixed-effects model, the ICC results showed that month explains only about 0.44% of the variation and day essentially 0%, so random effects do not contribute meaningfully and should be excluded from the final model.
+
+For model selection, the AIC procedure led to a reduced model, and the final fitted model included DMC, ISI, RH, and wind. However, from the regression output, only ISI showed marginal significance (p ≈ 0.014), while others were not significant. In addition, regularization methods (ridge and lasso) showed that most coefficients shrink toward zero, and after multiple testing corrections (Holm and BH), only DMC remained significant, while all other variables became non-significant. This suggests that DMC is the most stable and reliable predictor, while the rest have weak or unstable effects.
+
+Collinearity was observed in the scatterplot matrix (especially among variables like DMC, DC, and ISI), which justifies the use of ridge and lasso regression to stabilize estimates. Since heteroscedasticity was not a major issue based on earlier tests, we do not need WLS, but to ensure valid inference, we should still use robust (HC) standard errors. Because the data is highly skewed and the model assumptions are weak, inference should also be supported using bootstrap standard errors and confidence intervals, instead of relying only on asymptotic results.
+
+For hypothesis testing, we used global F-tests, likelihood-based methods, and permutation-style reasoning earlier, and results consistently showed weak overall significance (e.g., global p-value ≈ 0.08). Multiple testing corrections further confirmed that most variables are not significant once we control for false positives.
+
+Overall, the final model should be a log-linear model with a small set of predictors (primarily DMC, with cautious inclusion of ISI), no random effects, and inference based on robust SEs, bootstrap methods, and multiple testing corrections. Even after all adjustments, the model has very low explanatory power (adjusted R² ≈ 0.016), meaning that most of the variation in fire size is still unexplained (only explain 1.6% of variation in log_area), likely due to missing important variables or the inherently unpredictable nature of wildfire behavior.
