@@ -990,5 +990,125 @@ So overall, even after model selection, we still can’t make strong inferences 
 ## collinearity  
 
 
+```{r}
 
+library(glmnet)
 
+X = as.matrix(df_trans[, c("X", "Y", "FFMC", "DMC", "DC", "ISI", "temp", "RH", "wind")])
+Y = df_trans$log_area
+
+n = nrow(X)
+P = ncol(X)
+```
+
+```{r}
+
+## Collinearity check
+
+cor(df_trans[, c("X", "Y", "FFMC", "DMC", "DC", "ISI", "temp", "RH", "wind")])
+
+plot(df_trans[, c("X", "Y", "FFMC", "DMC", "DC", "ISI", "temp", "RH", "wind")],
+     pch = 16, cex = 0.25)
+```
+From the correlation matrix and scatterplot matrix, we can see that some variables show clear relationships with each other, especially among the fire weather variables like DMC, DC, and ISI. The scatterplots show visible linear trends between these variables, which suggests moderate collinearity. This means some predictors are carrying overlapping information, which can make OLS coefficient estimates unstable and sensitive to small changes in the data. So overall, there is some level of multicollinearity present in this dataset.
+
+```{r}
+
+## Train / test split
+
+set.seed(0)
+
+train = sample(1:n, floor(n / 2))
+test = (1:n)[-train]
+```
+
+```{r}
+
+## Ridge regression
+
+cv.ridge = cv.glmnet(X[train,], Y[train], nfolds = 5, alpha = 0)
+
+ridge = glmnet(X[test,], Y[test],
+               alpha = 0,
+               lambda = cv.ridge$lambda.min)
+
+print(ridge$beta)
+```
+From the ridge regression results, we can see that all coefficients are shrunk toward zero compared to OLS, but none of them are exactly zero. This is expected because ridge regression penalizes large coefficients but keeps all variables in the model. The shrinkage helps reduce instability caused by multicollinearity. Compared to OLS, the coefficients are smaller and more balanced, which suggests that ridge is stabilizing the estimates when predictors are correlated.
+```{r}
+
+## Bootstrap SE for ridge coefficients
+
+nboot = 1000
+
+beta_ridge = matrix(0, nboot, P)
+colnames(beta_ridge) = colnames(X)
+
+for (i in 1:nboot)
+{
+  ind = sample(test, replace = TRUE)
+  beta_ridge[i,] = glmnet(X[ind,], Y[ind],
+                          alpha = 0,
+                          lambda = cv.ridge$lambda.min)$beta[,]
+}
+
+SE_ridge = apply(beta_ridge, 2, sd)
+
+print(SE_ridge)
+```
+Using bootstrap, we estimated the standard errors for the ridge coefficients. The bootstrap SEs are generally small and more consistent across variables, which indicates that the ridge estimates are relatively stable across different resampled datasets. Since ridge already shrinks coefficients, it reduces variability, so the bootstrap confirms that ridge provides more stable estimates compared to OLS in the presence of collinearity.
+```{r}
+
+## Lasso regression
+
+cv.lasso = cv.glmnet(X[train,], Y[train], alpha = 1)
+
+lasso = glmnet(X[test,], Y[test],
+               alpha = 1,
+               lambda = cv.lasso$lambda.min)
+
+print(lasso$beta)
+```
+From the lasso regression results, we can see that some coefficients are reduced a lot, and at least one variable (temp) is shrunk all the way to zero. This shows that lasso not only shrinks coefficients but also performs variable selection. Compared to ridge, lasso produces a simpler model by removing less important variables. This makes the model easier to interpret and helps reduce noise from irrelevant predictors.
+```{r}
+## Bootstrap SE for lasso coefficients
+
+beta_lasso = matrix(0, nboot, P)
+colnames(beta_lasso) = colnames(X)
+
+for (i in 1:nboot)
+{
+  ind = sample(test, replace = TRUE)
+  beta_lasso[i,] = glmnet(X[ind,], Y[ind],
+                          alpha = 1,
+                          lambda = cv.lasso$lambda.min)$beta[,]
+}
+
+SE_lasso = apply(beta_lasso, 2, sd)
+
+print(SE_lasso)
+
+```
+The bootstrap standard errors for the lasso coefficients show more variation compared to ridge. This is because lasso can set coefficients to zero or near zero, which makes the estimates less stable across resamples. Some variables have larger SEs, indicating that their inclusion in the model is less consistent. Overall, lasso is more aggressive in variable selection, but this can come with higher variability in the estimates.
+```{r}
+
+## OLS comparison
+
+ols = lm(log_area ~ X + Y + FFMC + DMC + DC + ISI + temp + RH + wind,
+         data = df_trans)
+
+SE_OLS = summary(ols)$coefficients[-1, 2]
+
+comparison_table = data.frame(
+  Variable = colnames(X),
+  OLS_SE = SE_OLS,
+  Ridge_SE = SE_ridge,
+  Lasso_SE = SE_lasso
+)
+
+comparison_table[,2:4] = round(comparison_table[,2:4], 4)
+
+print(comparison_table)
+```
+
+Comparing the standard errors across OLS, ridge, and lasso, we can see that ridge generally produces the smallest standard errors, while OLS tends to have larger ones due to multicollinearity. Lasso standard errors are sometimes larger than ridge because of its variable selection behavior, which introduces more variability. This shows that regularization methods help reduce instability in coefficient estimates, especially when predictors are correlated. However, even with regularization, the differences are not extremely large, which suggests that the overall signal in the data is still weak. So in conclusion, ridge provides the most stable estimates, lasso helps simplify the model, and OLS is more affected by collinearity.f
