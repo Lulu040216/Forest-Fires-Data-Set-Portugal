@@ -10,55 +10,161 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r}
-library(car);library(lmtest);library(skedastic);library(sandwich);
+library(car);library(lmtest);library(sandwich);library(sandwich);library(lmtest)
 ```
 
 ## Introduction to "Fire"
 
-This data set contains measurements on 270 forest fires in the northeast region of Portugal.
+This data set contains measurements on 270 forest fires in the northeast region of Portugal. We first read in the data and check the dimension, variable names, first few rows, and summary statistics. 
 
 ```{r}
+## Introduction to Fire Data
+
 df = read.table("fire.txt", header = TRUE)
+
+dim(df)
+head(df)
 summary(df)
 ```
 
-Our response variable is `area`, by our first eye, we noticed that it has a median of 6.37, a mean of 24.6, while the 3rd qu of 15.42, indicating that it does not follow normal distribution for sure and we might transform it into log form in the future.
+```{r}
+names(df)
+```
+Our response variable is `area`, by our first eye, we noticed that it has a median of 6.37, a mean of 24.6, while the 3rd qu of 15.42, indicating that it does not follow normal distribution for sure and we might transform it into log form in the future. Quantitative covariates includes `FFMC`, `DMC`, `DC`, `ISI`, `temp`, `RH`, `wind`, and location information `X` and `Y`. While the rest, `month` and `day` are qualitative variables that will be used later for fixed/random effects.
 
 ```{r}
-hist(df$area)
-```
+df$month = factor(df$month)
+df$day = factor(df$day)
 
-Quantitative covariates includes `FFMC`, `DMC`, `DC`, `ISI`, `temp`, `RH`, `wind`, and location information `X` and `Y`. While the rest, `month` and `day` are qualitative variables that will be used later for fixed/random effects.
+summary(df)
+```
+The variables month and day are qualitative variables, so I convert them into factors. I do not include them in the first baseline model because we want tto use all quantitative covariates and ignore qualitative variables.
+
+```{r}
+df_quant = df[, c("X", "Y", "FFMC", "DMC", "DC", "ISI",
+                  "temp", "RH", "wind", "area")]
+
+summary(df_quant)
+```
+The quantitative covariates are X, Y, FFMC, DMC, DC, ISI, temp, RH, and wind. The response variable is area. I keep only these variables in df_quant.
+
+```{r}
+Y = df_quant$area
+
+hist(Y, xlab = "Area", main = "Histogram of Area")
+boxplot(Y, ylab = "Area", pch = 16)
+```
+The response variable area is strongly right-skewed. The mean is much larger than the median, and the histogram shows that most fires have small burned area while a few fires have much larger values. This means the normality assumption may be questionable, so a transformation may be useful later. For now, I still start with the required baseline linear model using the original response.
+```{r}
+plot(df_quant, pch = 16, cex = 0.5)
+```
+The scatterplot matrix gives an overall view of the relationships between all quantitative variables. From the plot, most variables do not show strong linear relationships with the response variable area. The values of area are heavily concentrated near zero, with a few large values, which confirms that the response variable is highly right-skewed.
+
+Some covariates, such as DMC, DC, and ISI, show moderate positive relationships with each other, indicating possible correlation among predictors. The variables temp and RH appear to have a negative relationship, which is also visible in the scatterplots.
+
+Overall, the relationships between predictors and the response are weak and noisy, which suggests that the linear model may have low explanatory power.
+
 
 ## Basic Model
 
 ### OLS and tests
 
 ```{r}
-# We preserve quantitative covirates at this stage
-df_quant = subset(df, select = -c(month,day))
 ols_model = lm(area ~ ., df_quant)
 summary(ols_model)
 ```
 
-We notice that no covariates shows statistical significance at this stage, and the adjusted R-squared is very low.
+we fit a multiple linear regression model using area as the response and all quantitative covariates as predictors.
+
+From the coefficient table, none of the covariates are statistically significant at the 5% level, since all p-values are greater than 0.05. The signs of the coefficients suggest weak relationships, but they are not statistically reliable.
+
+The overall F-statistic has a p-value of 0.4355, which means we fail to reject the null hypothesis that all regression coefficients are equal to zero. This indicates that the model does not provide strong evidence that the predictors explain the variation in area.
+
+The multiple R^2 is about 0.0337, and the adjusted R^2 is extremely small (approximately 0.0002), which shows that the model explains almost none of the variability in the response.
+
+Overall, this suggests that the linear relationship between the covariates and the response is very weak, which is consistent with the earlier scatterplot observations.
+
+
+```{r}
+Y = df_quant$area
+X = model.matrix(ols_model)
+
+n = dim(X)[1]
+p = dim(X)[2]
+
+colnames(X)
+```
+I define the response vector Y, the design matrix X, the sample size n, and the number of estimated regression coefficients p. The first column of X is the intercept column. I print colnames(X) because the order of the columns matters when I build the constraint matrix R.
+
+```{r}
+beta = solve(crossprod(X), crossprod(X, Y))[,]
+print(beta)
+
+beta = ols_model$coefficients
+print(beta)
+
+residuals = Y - X %*% beta
+
+sigma = sqrt(mean(residuals^2))
+print(sigma)
+
+S = sqrt(sum(residuals^2) / (n - p))
+print(S)
+
+S = summary(ols_model)$sigma
+print(S)
+```
+I compute the OLS coefficients using the matrix formula and then compare them with ols_model$coefficients. They should match. I also compute the MLE estimate of residual standard deviation, sigma, and the unbiased residual standard error, S. The later exact F and Wald tests use this same setup.
 
 Our required linear constrain to test is 
 $$
-H_0:50\beta_{DHC}+10\beta_{RH}=6\beta_{lSl}+12\beta_{temp}=3.
+H_0:
+\begin{aligned}
+50\beta_{DMC} + 10\beta_{RH} &= 3 \\
+6\beta_{ISI} + 12\beta_{temp} &= 3
+\end{aligned}
 $$
 
 ```{r}
-constraints <- c("50*DC + 10*RH = 3", 
-                 "6*ISI + 12*temp = 3")
-f_test <- linearHypothesis(ols_model, constraints, test = "F")
-print(f_test)
+## Linear Constraints
 
-wald_test <- linearHypothesis(ols_model, constraints, test = "Chisq")
-print(wald_test)
+R = rbind(c(0, 0, 0, 0, 50, 0, 0, 0, 10, 0),
+          c(0, 0, 0, 0, 0, 0, 6, 12, 0, 0))
+
+r = c(3, 3)
+k = length(r)
+
+print(colnames(X))
+print(R)
+print(r)
 ```
 
-The results from Exact F test and Asymptomatic Wald test agree each other and show that we cannot reject the null hypothesis. The Chisq statistic is about two times of F statistic, as the two has a difference of 2 degrees of freedom. Score test and LR test are both asymptomatic test, and similar to Wald test. The only difference between Wald test and Score test is the variance they use.
+```{r}
+## Exact F Test
+
+FT = crossprod(R %*% beta - r,
+               solve(R %*% solve(crossprod(X), t(R)),
+                     R %*% beta - r))[,] / (k * S^2)
+
+print(FT)
+
+pvalue_F = pf(FT, k, n - p, lower.tail = FALSE)
+print(pvalue_F)
+
+## Wald Test
+
+WT = k * FT
+print(WT)
+
+pvalue_WT = pchisq(WT, k, lower.tail = FALSE)
+print(pvalue_WT)
+```
+
+The results from the exact F test and the asymptotic Wald test are very similar. The p-values are both very large (close to 1), so we fail to reject the null hypothesis at the 5% significance level.
+
+This means there is no statistical evidence that the given linear constraints are violated, so the null hypothesis is consistent with the data.
+
+The agreement between the F test and the Wald test is expected, since both tests are based on the same null hypothesis and use the same estimated coefficients. The Wald test is an asymptotic approximation of the exact F test, so when the sample size is large, the two tests tend to give similar conclusions.
 
 ### Heteroscedasticity
 
@@ -68,228 +174,468 @@ We need homoscedasticity to calculate a valid OLS SE, so we can plot a scatter p
 plot(ols_model, which = 1)
 ```
 
-From the plot, we are surprised to find that there is no significant heteroscedasticity. We use test to verify our observation from the plot.
+From the plot, most residuals are centered around 0 with no clear funnel shape.There are a few large outliers, but overall variance looks roughly constant.So visually, there is no strong evidence of heteroscedasticity.
 
 ```{r}
-bp_test_result = bptest(ols_model)
-print(bp_test_result)
+# Step 1: residuals
+residuals = ols_model$residuals
+
+# Step 2: squared residuals
+Y_aux = residuals^2
+
+# Step 3: regress squared residuals on covariates
+X = model.matrix(ols_model)
+aux_model = lm(Y_aux ~ X[,-1])
+
+# Step 4: compute R^2
+R2_aux = summary(aux_model)$r.squared
+
+# Step 5: compute BP statistic
+n = length(residuals)
+BP_stat = n * R2_aux
+
+# Step 6: p-value
+p_value = 1 - pchisq(BP_stat, df = ncol(X) - 1)
+
+print(BP_stat)
+print(p_value)
 ```
 
-```{r}
-squared_residuals <- resid(ols_model)^2
+We formally test for heteroscedasticity using the Breusch–Pagan test. This test is implemented by regressing the squared residuals on the covariates and computing the test statistic nR^2, which follows a chi-squared distribution under the null hypothesis of constant variance .
 
-df_quant2 = subset(df_quant, select = -area)
-aux_model <- lm(squared_residuals ~ .^2 + I(as.matrix(df_quant2)^2), data = df_quant2)
-# We could also include interaction here if needed
-r_sq <- summary(aux_model)$r.squared
-n <- nrow(df_quant2)
-lm_stat <- n * r_sq
-p_val <- pchisq(lm_stat, df = aux_model$rank - 1, lower.tail = FALSE)
-print(p_val)
-```
+From our computation, we obtain:
 
-```{r}
-white(ols_model)
-```
+BP=5.399977
+p-value = 0.7981412
 
-We could not reject the null hypothesis, thus we have conclude that the residuals are homoscedastic. However, we doubt the result of both tests, because we think most of our respond data are around 0, it is a serious right skewed data. And because BP test rely heavily on normality assumption, it may not work in our basic model. Though White test does not rely on normality assumption under large sample size, our model has about 200 degrees of freedom, might not enough for it to provide the correct result.
+Since the p-value is much larger than 0.05, we fail to reject the null hypothesis. Therefore, there is no statistical evidence that the variance of the residuals depends on the covariates.
 
-After all, at this stage, the variance of the random error terms non-constant is not a function of any of the quantitative covariates.
+This result is consistent with the residual plot, where the spread of residuals appears relatively stable across fitted values, despite the presence of a few large outliers.
+
+However, we doubt the result of both tests, because we think most of our respond data are around 0, it is a serious right skewed data. And because BP test rely heavily on normality assumption, it may not work in our basic model. 
 
 ## Robust Standard Errors 
 
 ```{r}
-se_ols <- sqrt(diag(vcov(ols_model)))
-se_hc3 <- sqrt(diag(vcovHC(ols_model, type = "HC3")))
+vcovOLS = summary(ols_model)$sigma^2 * summary(ols_model)$cov.unscaled
+print(vcovOLS)
 
-compare_se <- data.frame(
-  Variable = names(se_ols),
-  OLS_SE = se_ols,
-  HC3_SE = se_hc3
-  )
+Sigma = diag(residuals^2 / (1 - hatvalues(ols_model))^2)
 
-print(compare_se)
+vcovHC3 = summary(ols_model)$cov.unscaled %*% crossprod(X, Sigma) %*%
+  X %*% summary(ols_model)$cov.unscaled
+
+print(vcovHC3)
+
 ```
 
-Different from what we learned, the HC3 SE is even smaller than OLS SE.
+
+We compare the usual OLS covariance matrix with the HC3 version to see if accounting for heteroscedasticity changes anything. From the results, the values in the two matrices are very similar overall, with only small differences across some coefficients. This tells us that adjusting for heteroscedasticity does not significantly change how much uncertainty we estimate for the coefficients. In other words, the variability of the estimates is pretty stable. This is consistent with what we saw earlier from the residual plot and the Breusch–Pagan test, where there was no strong evidence of heteroscedasticity. So overall, using the HC3 adjustment does not change our conclusions, and the OLS results appear to be reliable.
 
 ```{r}
-robust_t_test <- coeftest(ols_model, vcov = vcovHC(ols_model, type = "HC3"))
-print(robust_t_test)
-summary(ols_model)
-```
 
-The robust t test shows a even better result, though non of the covariates are statistical significant.
-
-```{r}
-robust_ci <- coefci(ols_model, vcov = vcovHC(ols_model, type = "HC3"), level = 0.95)
-print("---hc3 vcov---")
-print(robust_ci)
-ols_ci <- confint(ols_model, level = 0.95)
-print("---ols(hc0) vcov---")
-print(ols_ci)
-```
-
-Similarly, the 95% robust CIs are smaller than the CIs from OLS.
-
-### Iteratively Reweighted Least Squares
-
-## Bootstrap
-
-### Jackknife
-
-```{r}
-n = dim(df_quant)[1]
-p = dim(df_quant)[2]
-
-beta = ols_model$coefficients
-SE_ols = summary(ols_model)$coefficients[, 2]
-
-# Jackknife
-betajack = matrix(0, n, p)
-for (i in 1:n)
-{
-  jack = lm(area ~ ., df_quant[-i, ])
-  betajack[i,] = jack$coefficients
-}
-
-SE_jack = apply(betajack, 2, sd) * sqrt((n - 1)^2 / n)
-
-# Bootstrap
-nboot = 10000
-betaboot = matrix(0, nboot, p)
-for (k in 1:nboot)
-{
-  boot = lm(area ~ ., df_quant[sample(n, replace = TRUE), ])
-  betaboot[k,] = boot$coefficients
-}
-betabar_boot = colMeans(betaboot)
-# Calculate Bootstrap SE
-SE_boot = apply(betaboot, 2, sd)
-
-se_comparison <- data.frame(
-  Variable = names(SE_ols),
-  OLS_SE = SE_ols,
-  Jackknife_SE = SE_jack,
-  Bootstrap_SE = SE_boot
+SE = cbind(
+  OLS = sqrt(diag(vcovOLS)),
+  HC3 = sqrt(diag(vcovHC3))
 )
 
-print(se_comparison)
+print(SE)
 ```
-
-For most covirates, OLS_SE is larger than the SE of jackknife and bootstrap, while the latter two is about the same.
+From the comparison, we notice that many of the HC3 standard errors are actually smaller than the OLS standard errors, which might seem unexpected at first. This can happen when there is little to no strong heteroscedasticity in the data, since the HC3 adjustment is designed to correct for uneven variance but does not always inflate the standard errors. In some cases, the adjustment can slightly reduce the estimated variability, especially when certain observations have high leverage and the correction redistributes their influence. Overall, since the differences are not large and the pattern is fairly consistent across variables, this suggests that heteroscedasticity is not a major issue in this model. This again supports our earlier findings that the OLS results are relatively stable and reliable.
 
 ```{r}
 alpha = 0.05
 
-ci_ols <- confint(ols_model, level = 1 - alpha)
-CInormal = cbind(betabar_boot - qnorm(1 - alpha / 2) * SE_boot, 
-                 betabar_boot + qnorm(1 - alpha / 2) * SE_boot)
-colnames(CInormal) = c("2.5%", "97.5%")
-CIpercentile = cbind(apply(betaboot, 2, quantile, probs = alpha / 2), 
-                     apply(betaboot, 2, quantile, probs = 1 - alpha / 2))
-colnames(CIpercentile) = c("2.5%", "97.5%")
-CIpivotal = cbind(2 * beta - apply(betaboot, 2, quantile, probs = 1 - alpha / 2), 
-                  2 * beta - apply(betaboot, 2, quantile, probs = alpha / 2))
-colnames(CIpivotal) = c("2.5%", "97.5%")
-CI_wide <- data.frame(
-  Variable = names(beta),
-  OLS = sprintf("[%0.2f, %0.2f]", ci_ols[,1], ci_ols[,2]),
-  Normal = sprintf("[%0.2f, %0.2f]", CInormal[,1], CInormal[,2]),
-  Percentile = sprintf("[%0.2f, %0.2f]", CIpercentile[,1], CIpercentile[,2]),
-  Pivotal = sprintf("[%0.2f, %0.2f]", CIpivotal[,1], CIpivotal[,2])
+CI_HC3 = cbind(
+  beta - qt(1 - alpha / 2, n - p) * sqrt(diag(vcovHC3)),
+  beta + qt(1 - alpha / 2, n - p) * sqrt(diag(vcovHC3))
 )
 
-print(CI_wide)
+colnames(CI_HC3) = colnames(confint(ols_model))
+print(CI_HC3)
+
+CI_OLS = confint(ols_model)
+print(CI_OLS)
 ```
 
-The normal CI is smaller then OLS CI, which is different from our assumption. But we can see that the percentile CI is mostly smaller than the normal CI, while the Pivotal CI is exact the size of Percentile CI. The Pivotal CI can adjust itself according to the skewed distribution of the covariates.
+Looking at the 95% confidence intervals, the HC3 intervals and the OLS intervals are very similar overall. For most variables, the HC3 intervals are slightly narrower, which matches what we saw earlier with the standard errors being a bit smaller. More importantly, all the intervals still include 0, so the conclusion about which variables are statistically significant does not change at all. This tells us that adjusting for heteroscedasticity does not really affect our inference. Overall, the results are very consistent between the two methods, which again suggests that heteroscedasticity is not a major issue in this model.
+
+```{r}
+test = matrix(0, p, 4)
+rownames(test) = names(ols_model$coefficients)
+colnames(test) = colnames(summary(ols_model)$coefficients)
+
+test[,1] = beta
+test[,2] = sqrt(diag(vcovHC3))
+test[,3] = test[,1] / test[,2]
+test[,4] = 2 * pt(abs(test[,3]), n - p, lower.tail = FALSE)
+
+print(test)
+
+summary(ols_model)
+```
+
+Looking at the robust t-test results compared to the usual OLS output, the overall conclusions stay the same. The standard errors change a bit (mostly getting smaller), which makes some t-values slightly larger, but not enough to make any variables statistically significant. All the p-values are still well above 0.05, so none of the covariates show a meaningful relationship with the response variable under either method. This tells us that adjusting for heteroscedasticity does not change our inference at all, and the results from the model are consistent and stable.
+
+### Iteratively Reweighted Least Squares
+
+```{r}
+plot(rstandard(ols_model) ~ temp, df_quant,
+     ylab = "Standardized Residuals",
+     pch = 16)
+abline(h = 0, lty = 2, lwd = 2)
+```
+
+```{r}
+# IRLS with residual variance modeled as a function of temp
+
+irls_model = ols_model
+residuals_irls = irls_model$residuals
+
+w = rep(1, nrow(df_quant))
+err = Inf
+tol = 1e-10
+niter = 0
+maxiter = 1e3
+
+while (err > tol & niter < maxiter)
+{
+  
+  aux = lm(log(residuals_irls^2) ~ log(temp), df_quant)
+  err = sum(abs(w - exp(-aux$fitted.values))) / sum(w)
+  w = exp(-aux$fitted.values)
+  WLS = lm(area ~ ., df_quant, weights = w)
+  residuals_irls = WLS$residuals
+  niter = niter + 1
+  
+}
+
+summary(aux)
+summary(WLS)
+```
+
+```{r}
+gamma_hat = coef(aux_model)
+
+alpha_0_hat = exp(gamma_hat[1])
+alpha_1_hat = gamma_hat[2]
+
+alpha_0_hat
+alpha_1_hat
+
+cat(
+  paste0(
+    "Estimated residual variance equation: sigma_i^2 = ",
+    round(alpha_0_hat, 4),
+    " * temp_i^",
+    round(alpha_1_hat, 4)
+  )
+)
+```
+
+```{r}
+ols_summary = summary(ols_model)
+irls_summary = summary(irls_model)
+
+compare_ols_irls = data.frame(
+  Variable = names(coef(ols_model)),
+  OLS_Estimate = coef(ols_model),
+  OLS_SE = ols_summary$coefficients[, "Std. Error"],
+  OLS_t = ols_summary$coefficients[, "t value"],
+  OLS_p_value = ols_summary$coefficients[, "Pr(>|t|)"],
+  IRLS_Estimate = coef(irls_model),
+  IRLS_SE = irls_summary$coefficients[, "Std. Error"],
+  IRLS_t = irls_summary$coefficients[, "t value"],
+  IRLS_p_value = irls_summary$coefficients[, "Pr(>|t|)"]
+)
+
+print(compare_ols_irls)
+```
+
+```{r}
+ols_ci = confint(ols_model, level = 0.95)
+irls_ci = confint(irls_model, level = 0.95)
+
+print("--- OLS 95% CI ---")
+print(ols_ci)
+
+print("--- IRLS/WLS 95% CI ---")
+print(irls_ci)
+```
+
+```{r}
+summary(w)
+```
+
+
+```{r}
+plot(WLS$fitted.values, rstandard(WLS),
+     xlab = "Fitted Values",
+     ylab = "Standardized Residuals",
+     pch = 16)
+abline(h = 0, lty = 2, lwd = 2)
+```
+Compared with OLS, the IRLS estimates change substantially for several coefficients.
+ For example, the coefficient of `temp` decreases from 1.1524 under OLS to 0.1311 
+ under IRLS, and the coefficient of `wind` changes from 2.5191 to -0.1492. The standard
+ errors are also generally smaller under IRLS. However, the inferential conclusion remains
+the same: none of the covariates is statistically significant at the 5% level.
+
+The confidence intervals from IRLS are generally narrower than the OLS confidence intervals.
+ For example, the 95% CI for `temp` changes from \([-1.6071, 3.9118]\) under OLS to 
+ \([-0.9781, 1.2402]\) under IRLS. Similarly, the 95% CI for `wind` changes from 
+ \([-3.6896, 8.7279]\) under OLS to \([-2.5885, 2.2900]\) under IRLS. Even though 
+ the IRLS intervals are narrower, they still contain zero for every covariate.
+
+## Bootstrap and Jackknife 
+
+```{r}
+## Jackknife
+
+n = nrow(df_quant)
+p = length(coef(ols_model))
+
+beta_jack = matrix(0, n, p)
+
+for (i in 1:n)
+{
+  fit_i = lm(area ~ ., df_quant[-i, ])
+  beta_jack[i, ] = coef(fit_i)
+}
+
+beta_bar = colMeans(beta_jack)
+
+se_jack = sqrt((n - 1) / n *
+  colSums((sweep(beta_jack, 2, beta_bar, "-"))^2))
+
+print(se_jack)
+
+## Bootstrap
+
+set.seed(0)
+B = 1000
+
+beta_boot = matrix(0, B, p)
+
+for (b in 1:B)
+{
+  idx = sample(1:n, n, replace = TRUE)
+  fit_b = lm(area ~ ., df_quant[idx, ])
+  beta_boot[b, ] = coef(fit_b)
+}
+
+se_boot = apply(beta_boot, 2, sd)
+
+print(se_boot)
+```
+
+```{r}
+
+alpha = 0.05
+beta_hat = coef(ols_model)
+
+
+CI_normal = cbind(
+  beta_hat - qnorm(1 - alpha/2) * se_boot,
+  beta_hat + qnorm(1 - alpha/2) * se_boot
+)
+
+
+CI_percentile = apply(beta_boot, 2, quantile, probs = c(alpha/2, 1 - alpha/2))
+CI_percentile = t(CI_percentile)
+
+
+CI_pivot = cbind(
+  2 * beta_hat - CI_percentile[,2],
+  2 * beta_hat - CI_percentile[,1]
+)
+
+
+var_names = names(beta_hat)
+
+final_table = data.frame(
+  Variable = var_names,
+  OLS_SE = se_ols,
+  Jackknife_SE = se_jack,
+  Bootstrap_SE = se_boot,
+  Normal_L = CI_normal[,1],
+  Normal_U = CI_normal[,2],
+  Percentile_L = CI_percentile[,1],
+  Percentile_U = CI_percentile[,2],
+  Pivot_L = CI_pivot[,1],
+  Pivot_U = CI_pivot[,2]
+)
+
+
+final_table[,-1] = round(final_table[,-1], 3)
+
+print(final_table)
+```
+Overall, the resampling results show that the bootstrap and jackknife standard errors are quite close to each other and generally similar to the OLS standard errors. This suggests that the coefficient estimates are fairly stable and not overly sensitive to the specific sample. In most cases, the bootstrap and jackknife SEs are slightly smaller than the OLS SEs, which can happen when the model assumptions are not strongly violated or when the data does not exhibit strong heterogeneity.
+
+Looking at the confidence intervals, all three methods (normal, percentile, and pivotal) give very similar ranges for most variables. The percentile and pivotal intervals are almost identical in many cases, which indicates that the sampling distribution of the estimates is fairly symmetric. Compared to the normal intervals, the bootstrap-based intervals are sometimes slightly shifted or adjusted, reflecting small deviations from normality in the data.
+
+Importantly, across all methods, most confidence intervals include zero, meaning that none of the covariates appear to be statistically significant. This is consistent with the earlier OLS results and supports the conclusion that the model has very weak explanatory power for this dataset.
+
+In terms of purpose, the jackknife and bootstrap are used to check the reliability of the standard errors and confidence intervals without relying heavily on model assumptions. Here, since all methods lead to very similar conclusions, it reinforces that the lack of significance is not due to estimation method issues, but rather because the underlying relationships in the data are weak.
+
+
 
 ### Permutation test of model and `Wind`
-
 ```{r}
-set.seed(123)
-B <- 10000
-f_observed <- summary(ols_model)$fstatistic[1]
-df_f1 <- summary(ols_model)$fstatistic[2]
-df_f2 <- summary(ols_model)$fstatistic[3]
-f_permuted <- numeric(B)
+### Permutation test of full model and wind
 
-for (i in 1:B) {
-  perm_y <- sample(df_quant$area)
-  perm_model <- lm(perm_y ~ ., data = df_quant[, -which(names(df_quant) == "area")])
-  f_permuted[i] <- summary(perm_model)$fstatistic[1]
+set.seed(0)
+alpha = 0.05
+B = 10000
+
+Y = df_quant$area
+X = model.matrix(ols_model)
+n = dim(X)[1]
+p = dim(X)[2] - 1
+```
+
+## Permutation F test: overall model significance
+```{r}
+## Permutation F test: overall model significance
+
+f_observed = summary(ols_model)$fstatistic[1]
+df_f1 = summary(ols_model)$fstatistic[2]
+df_f2 = summary(ols_model)$fstatistic[3]
+
+p_val_F_theory = pf(f_observed, df_f1, df_f2, lower.tail = FALSE)
+
+f_permuted = numeric(B)
+
+for (i in 1:B)
+{
+  perm_y = sample(Y)
+  perm_model = lm(perm_y ~ ., data = df_quant[, names(df_quant) != "area"])
+  f_permuted[i] = summary(perm_model)$fstatistic[1]
 }
 
-p_val_F_precise <- (1 + sum(f_permuted >= f_observed)) / (1 + B)
-print(p_val_F_precise)
+p_val_F_perm = (1 + sum(f_permuted >= f_observed)) / (1 + B)
+
+print(f_observed)
+print(p_val_F_theory)
+print(p_val_F_perm)
 ```
 
 ```{r}
-par(mar = c(5, 5, 4, 2) + 0.1, mgp = c(3, 1, 0))
+## Plot for permutation F test
 
-hist(f_permuted, "FD", freq = FALSE, main = NA, 
-     xlab = "Permutation F Test Statistics", ylab = "Density",
-     col = "lightgray", border = "white")
-curve(df(x, df_f1, df_f2), add = TRUE, lty = 2, lwd = 2, col = 1)
+hist(f_permuted, "FD", freq = FALSE, main = NA,
+     xlab = "Permutation F Test Statistics",
+     ylab = "Density")
+
+curve(df(x, df_f1, df_f2), add = TRUE, lty = 2, lwd = 4)
+
 abline(v = qf(1 - alpha, df_f1, df_f2), col = 2, lty = 2, lwd = 4)
 abline(v = quantile(f_permuted, 1 - alpha), col = 4, lty = 2, lwd = 4)
-abline(v = f_observed, col = 3, lty = 2, lwd = 4)
+abline(v = f_observed, col = 7, lty = 2, lwd = 4)
 
-legend("topright", 
-       c("Theoretical Distribution", "Theoretical Quantile", 
+legend("topright",
+       c("Theoretical Distribution", "Theoretical Quantile",
          "Empirical Quantile", "Observed Statistic"),
-       col = c(1, 2, 4, 3), lty = rep(2, 4), lwd = rep(4, 4), 
-       cex = 0.8, bg = "white")
-
-mtext(text = paste("Observed F:", round(f_observed, 2), 
-                   "   Estimated P-value:", round(p_val_F_precise, 5)), 
-      side = 1, line = -1.5, adj = 0.5, outer = FALSE, cex = 0.9, col = "black")
+       col = c(1, 2, 4, 7),
+       lty = rep(2, 4),
+       lwd = rep(4, 4))
 ```
+The permutation F test is used to check whether the model is statistically significant overall, meaning whether all the covariates together have any real effect on the response variable. The observed F statistic is about 1.006, which is very small. The theoretical p-value is around 0.436, and the permutation-based p-value is about 0.395. These two values are pretty close to each other, which means the permutation test is giving a similar conclusion as the usual F test.
 
+Looking at the plot, the observed F statistic (yellow line) falls well inside the bulk of the permutation distribution, not in the extreme tail. This visually confirms that the observed value is not unusual under the null hypothesis. Also, both the theoretical and empirical critical values are clearly to the right of the observed statistic, which further shows that we do not have enough evidence to reject the null.
+
+Since both p-values are much larger than 0.05, we fail to reject the null hypothesis. This means the model is not statistically significant overall, and the covariates do not jointly explain the variation in the response variable. The permutation result supports the same conclusion as the theoretical test, so there is no evidence that the model has meaningful predictive power in this dataset.
+
+Permutaion t test of covariate "wind":
+
+We chose wind to do the permutaion t test because, in this fire dataset, wind is one of the most physically relevant variables for fire spread, so it’s meaningful to test it individually. At the same time, our earlier OLS results show that wind is not statistically significant (small t-value, large p-value), making it a good candidate to verify whether this lack of significance still holds under a nonparametric permutation test. This helps confirm that the conclusion is not just due to model assumptions, but is consistent with the data itself.
 ```{r}
-model_reduced <- lm(area ~ . - wind, data = df_quant)
-y_hat_reduced <- fitted(model_reduced)
-res_reduced <- residuals(model_reduced)
-t_observed <- summary(ols_model)$coefficients["wind", "t value"]
-df_t <- summary(ols_model)$df[2]
-t_permuted_res <- numeric(B)
+## Permutation t test for wind
 
-for (i in 1:B) {
-  res_star <- sample(res_reduced)
-  y_star <- y_hat_reduced + res_star
-  temp_data <- df_quant
-  temp_data$area <- y_star
-  model_star <- lm(area ~ ., data = temp_data)
-  t_permuted_res[i] <- summary(model_star)$coefficients["wind", "t value"]
+model_reduced = lm(area ~ . - wind, data = df_quant)
+
+fitted_reduced = model_reduced$fitted.values
+res_reduced = model_reduced$residuals
+
+t_observed = summary(ols_model)$coefficients["wind", "t value"]
+df_t = summary(ols_model)$df[2]
+
+p_val_t_theory = 2 * pt(abs(t_observed), df_t, lower.tail = FALSE)
+
+t_permuted = numeric(B)
+
+for (i in 1:B)
+{
+  res_star = sample(res_reduced)
+  y_star = fitted_reduced + res_star
+  
+  temp_data = df_quant
+  temp_data$area = y_star
+  
+  model_star = lm(area ~ ., data = temp_data)
+  t_permuted[i] = summary(model_star)$coefficients["wind", "t value"]
 }
 
-p_val_t_wind_precise <- (1 + sum(abs(t_permuted_res) >= abs(t_observed))) / (1 + B)
-print(p_val_t_wind_precise)
+p_val_t_perm = (1 + sum(abs(t_permuted) >= abs(t_observed))) / (1 + B)
+
+print(t_observed)
+print(p_val_t_theory)
+print(p_val_t_perm)
 ```
 
 ```{r}
-par(mar = c(5, 5, 4, 2) + 0.1, mgp = c(3, 1, 0))
+## Plot for permutation t test
 
-hist(t_permuted_res, "FD", freq = FALSE, main = NA, 
-     xlab = "Permutation t Test Statistics (Wind)", ylab = "Density",
-     col = "lightgray", border = "white")
+hist(t_permuted, "FD", freq = FALSE, main = NA,
+     xlab = "Permutation t Test Statistics (Wind)",
+     ylab = "Density")
 
-curve(dt(x, df = df_t), add = TRUE, lty = 2, lwd = 2, col = 1)
-abline(v = c(qt(alpha/2, df = df_t), qt(1 - alpha/2, df = df_t)), col = 2, lty = 2, lwd = 4)
-abline(v = c(quantile(t_permuted_res, alpha/2), quantile(t_permuted_res, 1 - alpha/2)), col = 4, lty = 2, lwd = 4)
-abline(v = c(t_observed, -t_observed), col = 3, lty = 2, lwd = 4)
-legend("topright", 
-       c("Theoretical Distribution", "Theoretical Quantile", 
+curve(dt(x, df_t), add = TRUE, lty = 2, lwd = 4)
+
+abline(v = qt(c(alpha / 2, 1 - alpha / 2), df_t),
+       col = 2, lty = 2, lwd = 4)
+
+abline(v = quantile(t_permuted, c(alpha / 2, 1 - alpha / 2)),
+       col = 4, lty = 2, lwd = 4)
+
+abline(v = c(t_observed, -t_observed),
+       col = 7, lty = 2, lwd = 4)
+
+legend("topright",
+       c("Theoretical Distribution", "Theoretical Quantile",
          "Empirical Quantile", "Observed Statistic"),
-       col = c(1, 2, 4, 3), lty = rep(2, 4), lwd = rep(4, 4), 
-       cex = 0.8, bg = "white")
-mtext(text = paste("Observed t (Wind):", round(t_observed, 2), 
-                   "   Estimated P-value:", round(p_val_t_wind_precise, 5)), 
-      side = 1, line = -1.5, adj = 0.5, outer = FALSE, cex = 0.9, col = "black")
+       col = c(1, 2, 4, 7),
+       lty = rep(2, 4),
+       lwd = rep(4, 4))
+```
+The permutation t test is used to check whether the single covariate wind has a statistically significant effect on the response variable. The observed t statistic is about 0.799, which is very close to 0, indicating a weak effect. The theoretical p-value is about 0.425, and the permutation-based p-value is about 0.415. These two values are very similar, which shows that the permutation test agrees with the classical t-test result.
+
+From the plot, the observed t statistic (yellow line) is located near the center of the permutation distribution, not in the tails. This means the observed value is very typical under the null hypothesis. The empirical quantiles (blue) and theoretical quantiles (red) are also very close, which suggests that the theoretical t distribution is a good approximation in this case.
+
+Since both p-values are much larger than 0.05, we fail to reject the null hypothesis. This means that the covariate wind is not statistically significant in explaining the response variable. The permutation test confirms the same conclusion as the theoretical test, so there is no evidence that wind has a meaningful effect in this dataset.
+
+
+```{r}
+## Summary table
+
+perm_table = data.frame(
+  Test = c("Overall F test", "wind t test"),
+  Observed_Statistic = c(f_observed, t_observed),
+  Theoretical_P_Value = c(p_val_F_theory, p_val_t_theory),
+  Permutation_P_Value = c(p_val_F_perm, p_val_t_perm)
+)
+
+print(perm_table)
 ```
 
-The estimated p values are larger than the theoretical p values under null hypothesis, thus the model, as well as the covariates `wind` seem to be not statistically significant.
+
+Both the overall F test and the wind t test show that the permutation p-values are very close to the theoretical p-values, and all of them are much larger than 0.05. This means we fail to reject the null hypothesis in both cases.
+
+For the overall model, this suggests that the set of quantitative covariates does not provide strong explanatory power for the response variable. For the wind covariate, the result confirms that its effect is not statistically significant.
+
+Since the permutation results agree closely with the theoretical results, this indicates that our conclusion is robust and not driven by distributional assumptions. In the context of this dataset, it suggests that the weak relationships we observed (very low signal) are real, rather than artifacts of model assumptions.
+
 
 ## Transformation
 
@@ -298,44 +644,228 @@ Transformation is vital for our data.
 ```{r}
 library(MASS)
 
-bc <- boxcox(lm(area ~ + 1., data = df_quant), 
-             lambda = seq(-2, 2, 0.1), plotit = TRUE)
+df_quant_clean <- subset(df, select = -c(month, day))
+
+bc_model <- lm(area ~ X + Y + FFMC + DMC + DC + ISI + temp + RH + wind,
+               data = df_quant_clean)
+
+bc <- boxcox(bc_model,
+             lambda = seq(-2, 2, by = 0.01),
+             plotit = TRUE)
 
 best_lambda <- bc$x[which.max(bc$y)]
-
-if (abs(best_lambda) < 0.1) {
-  df_quant$trans_area <- log(df_quant$area + 1)
-} else {
-  df_quant$trans_area <- ((df_quant$area + 1)^best_lambda - 1) / best_lambda
-}
 print(best_lambda)
 ```
-
 Thus, we can use the log transformation to `area` .
 
-Besides, we understand that the area is strictly larger than 0, so it is better to do the lm transformation without adding 1.
-Using just the log transformation will result in a higher R-squared and significantly higher adjusted R-squared to 0.3% instead of 0.08%.
+Because the area in this data set is strictly larger than 0, `log(area)` is enough and make more sense in this situation. We also test the r-squared and adjusted r-squared, though both are small, but log transform is better.
+
+By applying the log transformation, we reduce the impact of large outliers and compress the scale of extreme values. This helps make the distribution more symmetric and improves the behavior of residuals. Overall, the transformation makes the linear model assumptions more reasonable and leads to more reliable inference.
 
 ```{r}
-bc <- boxcox(lm(area ~ + 1., data = df_quant),
-             lambda = seq(-2, 2, 0.1), plotit = TRUE)
-
-best_lambda <- bc$x[which.max(bc$y)]
-
-if (abs(best_lambda) < 0.1) {
-  df_quant$trans_area <- log(df_quant$area)
-} else {
-  df_quant$trans_area <- ((df_quant$area)^best_lambda - 1) / best_lambda
-}
-print(best_lambda)
-```
-
-```{r}
+df_quant$trans_area = log(df_quant$area)
 hist(df_quant$trans_area)
 ```
+After applying the log transformation to area, the histogram shows a much more symmetric distribution compared to the original data. The values are now more centered and less dominated by extreme large observations, which reduces the strong right skew we saw before.
+
+Most of the data is concentrated in the middle range, and the tails are less stretched out. This indicates that the transformation successfully compresses large values and makes the distribution closer to normal.
+
+Overall, this improvement in the shape of the response variable suggests that the log transformation helps make the data better suited for linear regression assumptions, especially normality and constant variance.
+
 
 ```{r}
 ols_trans <- lm(trans_area ~ . - area, data = df_quant)
 summary(ols_trans)
 plot(ols_trans, which = 1)
 ```
+From the residuals vs fitted plot after applying the log transformation, the residuals are more randomly scattered around zero with no strong pattern. The red smooth line is relatively flat, which suggests that the linearity assumption is reasonably satisfied.
+
+Compared to the original model, there is less visible structure in the residuals, meaning the model fit has improved. The spread of residuals also looks more consistent across fitted values, indicating that the variance is more stable.
+
+Although a few points still appear as mild outliers, the overall pattern does not show clear heteroscedasticity or curvature. This suggests that the log transformation helps improve the model assumptions and provides a better fit for the data.
+
+```{r}
+df_quant$trans_area = log(df_quant$area)
+ols_log = lm(trans_area ~ . - area, data = df_quant)
+
+df_quant$trans_area = log1p(df_quant$area)
+ols_log1p = lm(trans_area ~ . - area, data = df_quant)
+
+compare = data.frame(
+  model = c("log", "log1p"),
+  n = c(nobs(ols_log), nobs(ols_log1p)),
+  p = c(length(coef(ols_log)) - 1, length(coef(ols_log1p)) - 1),
+  r2 = c(summary(ols_log)$r.squared, summary(ols_log1p)$r.squared),
+  adj_r2 = c(summary(ols_log)$adj.r.squared, summary(ols_log1p)$adj.r.squared)
+)
+
+compare
+```
+From the comparison table, both the log and log1p transformations produce very small R^2 and adjusted R^2, indicating that the overall model still has weak explanatory power. However, the log transformation performs slightly better than log1p in both metrics.
+
+Specifically, the log model has a higher R^2 and a noticeably higher adjusted R^2, while the log1p model shows a drop in adjusted R^2, suggesting a worse fit after accounting for model complexity.
+
+Since both models use the same number of predictors, the difference in adjusted R^2 directly reflects model performance rather than overfitting. Therefore, the log transformation is preferred over log1p for this dataset.
+
+Overall, although the improvement is small, the log transformation provides a slightly better fit and is more appropriate for modeling the response variable.
+
+```{r}
+
+r <- rstandard(ols_trans)
+
+qqnorm(r,
+       main = "Normal Q-Q Plot of Standardized Residuals",
+       pch = 16)
+
+qqline(r,
+       col = "red",
+       lwd = 2)
+```
+From the Q-Q plot of standardized residuals, most of the points lie close to the reference line, especially in the middle range. This suggests that the residuals are approximately normally distributed.
+
+There are some slight deviations at the tails, where a few points move away from the line, indicating mild departures from normality for extreme values. However, these deviations are not very large.
+
+Overall, the plot shows that the normality assumption is reasonably satisfied after the transformation, and the residuals are fairly consistent with a normal distribution.
+
+### Transformation of Covariates
+
+The fire weather variables `DMC`, `DC`, and `ISI` are positive indexes and can be highly right-skewed. The wind speed is also positive. Therefore, we use `log1p()` for these covariates, because it keeps the transformation stable even if a future data set contains zeros. For `FFMC`, most observations are close to the upper bound 100, so we use the log distance from the upper bound.
+
+```{r}
+df$month <- factor(df$month,
+                   levels = c("jan", "feb", "mar", "apr", "may", "jun",
+                              "jul", "aug", "sep", "oct", "nov", "dec"),
+                   ordered = TRUE)
+
+df$day <- factor(df$day,
+                 levels = c("mon", "tue", "wed", "thu", "fri", "sat", "sun"),
+                 ordered = TRUE)
+
+num_vars <- names(df)[sapply(df, is.numeric)]
+cat_vars <- names(df)[!sapply(df, is.numeric)]
+```
+
+```{r}
+par(mfrow = c(3, 4), mar = c(4, 4, 3, 1))
+
+for (v in num_vars) {
+  hist(df[[v]],
+       main = v,
+       xlab = v,
+       col = "lightgray",
+       border = "black")
+}
+```
+
+```{r}
+par(mfrow = c(1, length(cat_vars)), mar = c(6, 4, 3, 1))
+
+for (v in cat_vars) {
+  barplot(table(df[[v]]),
+          main = v,
+          ylab = "Frequency",
+          col = "lightgray",
+          border = "black",
+          las = 2)
+}
+```
+
+From the plots, we think transformation for covariates might not be meaningful.
+
+## interaction 
+```{r}
+df = read.table("fire.txt", header = TRUE)
+
+df_trans = df
+
+df_trans$month = factor(df_trans$month)
+df_trans$day = factor(df_trans$day)
+df_trans$log_area = log(df_trans$area)
+
+```
+
+```{r}
+df_inter = df_trans[, c(
+  "log_area", "day", "month",
+  "X", "Y", "FFMC", "DMC", "DC", "ISI", "temp", "RH", "wind"
+)]
+
+summary(df_inter)
+```
+
+First, we test the interaction of day with other covariates, expect month. We have 200 degrees of freedom in this model.
+
+```{r}
+fit_day_inter = lm(
+  log_area ~ day * (X + Y + FFMC + DMC + DC + ISI + temp + RH + wind),
+  data = df_inter
+)
+
+summary(fit_day_inter)
+anova(fit_day_inter)
+```
+
+Although most variables and interactions are not statistically significant, the interaction between day and DMC shows some evidence of significance. This suggests that the effect of fuel moisture on fire area may vary across days. However, the overall model fit remains weak, indicating that interaction terms alone are not sufficient to explain the variability in the data.
+
+```{r}
+fit_day_inter = update(fit_day_inter, . ~ . - day:FFMC)
+anova(fit_day_inter)
+```
+```{r}
+fit_day_inter = update(fit_day_inter, . ~ . - day:temp)
+anova(fit_day_inter)
+```
+```{r}
+fit_day_inter = update(fit_day_inter, . ~ . - temp)
+anova(fit_day_inter)
+```
+```{r}
+fit_day_inter = update(fit_day_inter, . ~ . - day:RH)
+anova(fit_day_inter)
+```
+```{r}
+fit_day_inter = update(fit_day_inter, . ~ . - FFMC)
+anova(fit_day_inter)
+```
+```{r}
+fit_day_inter = update(fit_day_inter, . ~ . - day:DC)
+anova(fit_day_inter)
+```
+```{r}
+fit_day_inter = update(fit_day_inter, . ~ . - day:wind)
+anova(fit_day_inter)
+```
+```{r}
+fit_day_inter = update(fit_day_inter, . ~ . - DC)
+anova(fit_day_inter)
+```
+```{r}
+fit_day_inter = update(fit_day_inter, . ~ . - day:Y)
+anova(fit_day_inter)
+```
+```{r}
+fit_day_inter = update(fit_day_inter, . ~ . - Y)
+anova(fit_day_inter)
+```
+```{r}
+fit_day_inter = update(fit_day_inter, . ~ . - day:X)
+anova(fit_day_inter)
+```
+```{r}
+fit_day_inter = update(fit_day_inter, . ~ . - X)
+anova(fit_day_inter)
+```
+```{r}
+fit_day_inter = update(fit_day_inter, . ~ . - day:ISI)
+anova(fit_day_inter)
+```
+```{r}
+fit_day_inter = update(fit_day_inter, . ~ . - RH)
+anova(fit_day_inter)
+```
+```{r}
+fit_day_inter = update(fit_day_inter, . ~ . - wind)
+anova(fit_day_inter)
+```
+We start with a full interaction model between day and all the quantitative variables, then go step by step removing terms that aren’t significant based on the ANOVA table. Most of the interaction terms (like day:X, day:Y, day:FFMC, day:temp, day:RH, day:wind, and day:DC) all have pretty large p-values and small F values, so they’re not really contributing much to the model. When we remove them, the residual mean square stays around the same (~2.2), which shows that dropping them doesn’t hurt the model fit. The only interaction that keeps showing up as significant is day:DMC, with p-values around 0.02–0.04, so this suggests that the effect of DMC on fire size actually depends on the day. Also, DMC by itself isn’t significant, which means its effect is not constant and only shows up through the interaction. ISI is kind of borderline significant (around 0.06), so we might keep it depending on how strict we want to be. In the end, we simplify the model a lot and keep the important parts, which are day, DMC, maybe ISI, and especially the interaction day:DMC, since that’s the only clear pattern we see from the results.
+We also test interaction effects of month, yet nothing is significant.
