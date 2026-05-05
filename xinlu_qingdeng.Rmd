@@ -431,6 +431,7 @@ print(se_boot)
 
 ```{r}
 
+se_ols = summary(ols_model)$coefficients[,2]
 alpha = 0.05
 beta_hat = coef(ols_model)
 
@@ -869,5 +870,103 @@ anova(fit_day_inter)
 ```
 We start with a full interaction model between day and all the quantitative variables, then go step by step removing terms that aren’t significant based on the ANOVA table. Most of the interaction terms (like day:X, day:Y, day:FFMC, day:temp, day:RH, day:wind, and day:DC) all have pretty large p-values and small F values, so they’re not really contributing much to the model. When we remove them, the residual mean square stays around the same (~2.2), which shows that dropping them doesn’t hurt the model fit. The only interaction that keeps showing up as significant is day:DMC, with p-values around 0.02–0.04, so this suggests that the effect of DMC on fire size actually depends on the day. Also, DMC by itself isn’t significant, which means its effect is not constant and only shows up through the interaction. ISI is kind of borderline significant (around 0.06), so we might keep it depending on how strict we want to be. In the end, we simplify the model a lot and keep the important parts, which are day, DMC, maybe ISI, and especially the interaction day:DMC, since that’s the only clear pattern we see from the results.
 We also test interaction effects of month, yet nothing is significant.
+
+## Mixed effect model 
+
+```{r}
+
+
+library(lme4)
+
+df_mixed = df
+
+df_mixed$month = factor(df_mixed$month)
+df_mixed$day = factor(df_mixed$day)
+
+
+df_mixed$log_area = log(df_mixed$area)
+
+
+fit_mixed = lmer(
+  log_area ~ X + Y + FFMC + DMC + DC + ISI + temp + RH + wind +
+    (1 | day) + (1 | month),
+  data = df_mixed
+)
+
+summary(fit_mixed, correlation = FALSE)
+
+
+```
+Overall, from the mixed-effects model, we can see that most of the fixed effects are not statistically strong, since their t-values are pretty small and close to zero. The only variable that shows some signal is DMC, which has a relatively larger t-value compared to the others, but even that is not very strong. This matches what we saw earlier with the OLS models, where it was already hard to find meaningful predictors for fire area. For the random effects, the variance for day is basically zero, while month has a very small variance, meaning these grouping variables do not explain much of the variation in the response. Most of the variation is still coming from the residual, which suggests that the model is not capturing the main drivers of fire size. Also, the “boundary (singular) fit” warning tells us that one of the random effects (in this case day) is not really contributing to the model, which makes sense since its variance is almost zero. Overall, this confirms that even after using a mixed-effects model, the data is still very noisy and difficult to explain, and the main patterns in fire area are likely driven by factors not included in the dataset.
+```{r}
+
+full = lmer(
+  log_area ~ X + Y + FFMC + DMC + DC + ISI + temp + RH + wind +
+    (1 | day) + (1 | month),
+  data = df_mixed,
+  REML = FALSE
+)
+
+fixed_names = c("X", "Y", "FFMC", "DMC", "DC", "ISI", "temp", "RH", "wind")
+
+LR = numeric(length(fixed_names))
+pvalue = numeric(length(fixed_names))
+
+for (i in 1:length(fixed_names))
+{
+  reduced_formula = as.formula(
+    paste("log_area ~",
+          paste(fixed_names[-i], collapse = " + "),
+          "+ (1 | day) + (1 | month)")
+  )
+  
+  reduced = lmer(reduced_formula, data = df_mixed, REML = FALSE)
+  
+  LR[i] = -2 * (logLik(reduced)[1] - logLik(full)[1])
+  pvalue[i] = pchisq(LR[i], 1, lower.tail = FALSE)
+}
+
+fixed_test_table = data.frame(
+  Fixed_Effect = fixed_names,
+  LR = LR,
+  p_value = pvalue
+)
+
+fixed_test_table[,2:3] = round(fixed_test_table[,2:3], 4)
+
+print(fixed_test_table)
+
+
+```
+From the likelihood ratio tests, none of the fixed effects are strongly significant at the 0.05 level, since all the p-values are above 0.05. The closest one is DMC, with a p-value around 0.08, which suggests it might have some weak effect, but it’s still not strong enough to be considered statistically significant. ISI and RH also show slightly smaller p-values compared to the others, but they are still not close enough to the cutoff. Overall, this result is pretty consistent with what we’ve been seeing throughout the analysis — it’s really hard to explain variation in fire area using these variables. Most of the predictors don’t contribute much individually, which suggests that the relationship is either very weak or driven by factors not included in the model.
+
+```{r}
+## ICC for random effects
+
+VarCorr(full)
+sigma = data.frame(summary(full)$varcor)$sdcor
+names(sigma) = data.frame(summary(full)$varcor)$grp
+
+ICC = sigma^2 / sum(sigma^2)
+
+print(ICC)
+```
+
+```{r}
+## Clean ICC table
+
+ICC_table = data.frame(
+  Random_Effect = names(ICC),
+  ICC = ICC,
+  Percent_Total_Variation = 100 * ICC
+)
+
+ICC_table[,2:3] = round(ICC_table[,2:3], 4)
+
+print(ICC_table)
+```
+
+From the ICC results, we can see that the random effects explain almost none of the total variation in log_area. The month effect only explains about 0.44% of the variation, and day is basically 0%, which means grouping by day of the week doesn’t matter at all here. Almost all the variation, around 99.56%, is coming from the residual, so it’s just unexplained noise. This tells us that fires within the same month are only slightly more similar to each other, and fires on the same day are not similar at all. Overall, the random effects are not contributing much, which again shows that this dataset is really hard to model and most of the variation is coming from factors we didn’t include.
+
 
 
