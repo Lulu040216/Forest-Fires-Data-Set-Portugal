@@ -1111,4 +1111,21 @@ comparison_table[,2:4] = round(comparison_table[,2:4], 4)
 print(comparison_table)
 ```
 
-Comparing the standard errors across OLS, ridge, and lasso, we can see that ridge generally produces the smallest standard errors, while OLS tends to have larger ones due to multicollinearity. Lasso standard errors are sometimes larger than ridge because of its variable selection behavior, which introduces more variability. This shows that regularization methods help reduce instability in coefficient estimates, especially when predictors are correlated. However, even with regularization, the differences are not extremely large, which suggests that the overall signal in the data is still weak. So in conclusion, ridge provides the most stable estimates, lasso helps simplify the model, and OLS is more affected by collinearity.f
+Comparing the standard errors across OLS, ridge, and lasso, we can see that ridge generally produces the smallest standard errors, while OLS tends to have larger ones due to multicollinearity. Lasso standard errors are sometimes larger than ridge because of its variable selection behavior, which introduces more variability. This shows that regularization methods help reduce instability in coefficient estimates, especially when predictors are correlated. However, even with regularization, the differences are not extremely large, which suggests that the overall signal in the data is still weak. So in conclusion, ridge provides the most stable estimates, lasso helps simplify the model, and OLS is more affected by collinearity.
+
+## multiple comparison 
+
+```{r}
+
+## One-way ANOVA (lecture style)
+fit_aov = aov(log_area ~ month, data = df_trans)
+summary(fit_aov)
+
+## Tukey multiple comparisons (95% global level)
+tukey_res = TukeyHSD(fit_aov)
+tukey_res
+```
+
+We test for differences in the average log_area across all months using a one-way ANOVA and then apply the Tukey multiple comparisons method at the 95% global confidence level to compare all possible month pairs. From the ANOVA result, the p-value is 0.342, which is much larger than 0.05, so we fail to reject the null hypothesis. This means there is no overall evidence that the average fire size differs across months. Looking at the Tukey multiple comparisons results, we see that all adjusted p-values are very large (almost all close to 1), and every confidence interval includes zero. This confirms that none of the month-to-month differences are statistically significant.
+
+Compared to doing pairwise comparisons without any correction, the Tukey method is more reliable because it controls the overall Type I error rate when making many comparisons. Without this adjustment, we could incorrectly find some differences to be significant just due to random chance. In contrast, Tukey’s method shows that once we properly account for multiple testing, there are no meaningful differences between any month pairs. Overall, both the ANOVA and the Tukey results consistently indicate that month does not have a significant effect on log_area, and any observed differences are likely due to random variation rather than real patterns in the data.
