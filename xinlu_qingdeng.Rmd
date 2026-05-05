@@ -941,7 +941,6 @@ print(fixed_test_table)
 From the likelihood ratio tests, none of the fixed effects are strongly significant at the 0.05 level, since all the p-values are above 0.05. The closest one is DMC, with a p-value around 0.08, which suggests it might have some weak effect, but it’s still not strong enough to be considered statistically significant. ISI and RH also show slightly smaller p-values compared to the others, but they are still not close enough to the cutoff. Overall, this result is pretty consistent with what we’ve been seeing throughout the analysis — it’s really hard to explain variation in fire area using these variables. Most of the predictors don’t contribute much individually, which suggests that the relationship is either very weak or driven by factors not included in the model.
 
 ```{r}
-## ICC for random effects
 
 VarCorr(full)
 sigma = data.frame(summary(full)$varcor)$sdcor
@@ -953,7 +952,6 @@ print(ICC)
 ```
 
 ```{r}
-## Clean ICC table
 
 ICC_table = data.frame(
   Random_Effect = names(ICC),
@@ -966,7 +964,31 @@ ICC_table[,2:3] = round(ICC_table[,2:3], 4)
 print(ICC_table)
 ```
 
-From the ICC results, we can see that the random effects explain almost none of the total variation in log_area. The month effect only explains about 0.44% of the variation, and day is basically 0%, which means grouping by day of the week doesn’t matter at all here. Almost all the variation, around 99.56%, is coming from the residual, so it’s just unexplained noise. This tells us that fires within the same month are only slightly more similar to each other, and fires on the same day are not similar at all. Overall, the random effects are not contributing much, which again shows that this dataset is really hard to model and most of the variation is coming from factors we didn’t include.
+From the ICC results, we can see that the random effects explain almost none of the total variation in log_area. The month effect only explains about 0.44% of the variation, and day is basically 0%, which means grouping by day of the week doesn’t matter at all here. Almost all the variation, around 99.56%, is coming from the residual, so it’s just unexplained noise. This tells us that fires within the same month are only slightly more similar to each other, and fires on the same day are not similar at all. Another way to interpret the ICC is as the correlation between two observations from the same group, so here it means two fires from the same month have almost no shared similarity, and for the same day, basically none. Overall, the random effects are not contributing much, which again shows that this dataset is really hard to model and most of the variation is coming from factors we didn’t include.
+
+## model selection 
+
+```{r}
+
+fit_full = lm(log_area ~ X + Y + FFMC + DMC + DC + ISI + temp + RH + wind, data = df_trans)
+
+summary(fit_full)
+```
+
+```{r}
+
+fit_selected = step(fit_full, direction = "backward")
+
+summary(fit_selected)
+```
+After removing all random effects, we fit a full linear regression model with all predictors and then applied backward selection using AIC. From the step-by-step output, we can see that variables like FFMC, temp, X, Y, and DC were gradually removed because dropping them lowered the AIC, meaning they were not helping the model fit. The process stopped at the model with the lowest AIC (229.16), which includes DMC, ISI, RH, and wind.
+
+Looking at the final model output, only ISI is statistically significant (p = 0.014), while DMC, RH, and wind are not significant at the 0.05 level. This suggests that ISI has some relationship with the log of burned area, but overall the effects are still pretty weak. The R-squared is only about 0.03, which is extremely low, meaning the model explains almost none of the variation in fire size. The overall F-test also has a p-value around 0.085, which is not strongly significant, so even the model as a whole is not very convincing.
+
+So overall, even after model selection, we still can’t make strong inferences about fire size using these predictors. The main takeaway is that only ISI shows some signal, but the dataset is still very noisy and most of the variation in fire area is coming from factors that are not included in the model.
+
+## collinearity  
+
 
 
 
