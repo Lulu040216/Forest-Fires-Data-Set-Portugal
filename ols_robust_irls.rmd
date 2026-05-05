@@ -1,0 +1,367 @@
+---
+title: "Fire"
+author: "Xinlu Jiang"
+date: "2026-04-13"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+setwd("C:/Users/jiang/OneDrive/Documents/R/finalProject4030/Forest-Fires-Data-Set-Portugal")
+library(car)
+library(lmtest)
+library(skedastic)
+library(sandwich)
+```
+
+## Introduction to "Fire"
+
+This data set contains measurements on 270 forest fires in the northeast region of Portugal.
+
+```{r}
+df = read.table("fire.txt", header = TRUE)
+summary(df)
+```
+
+Our response variable is `area`, by our first eye, we noticed that it has a median of 6.37,
+ a mean of 24.6, while the 3rd qu of 15.42, indicating that it does not follow normal 
+ distribution for sure and we might transform it into log form in the future.
+
+```{r}
+hist(df$area)
+```
+
+From our observation of the plot, we are sure that the area probably needs a log transformation.
+ And because it is strictly larger than 0, we can just use `log(area)` instead of `log(area+1)`,
+ which is what we learned on class.
+
+Quantitative covariates includes `FFMC`, `DMC`, `DC`, `ISI`, `temp`, `RH`, `wind`, and 
+ location information `X` and `Y`. While the rest, `month` and `day` are qualitative 
+ variables that will be used later for fixed/random effects.
+
+### Exploratory Simple Linear Regressions
+
+This part is not required in guidance, yet we find it might be useful as we goes further.
+
+```{r}
+df$log_area = log(df$area)
+```
+
+```{r}
+quant_vars = c("X", "Y", "FFMC", "DMC", "DC", "ISI", "temp", "RH", "wind")
+
+uni_models = lapply(quant_vars, function(v) {
+  lm(as.formula(paste("log_area ~", v)), data = df)
+})
+
+names(uni_models) = quant_vars
+```
+
+```{r}
+uni_results = data.frame(
+  variable = quant_vars,
+  coefficient = sapply(uni_models, function(m) coef(m)[2]),
+  p_value = sapply(uni_models, function(m) summary(m)$coefficients[2, 4]),
+  r_squared = sapply(uni_models, function(m) summary(m)$r.squared),
+  adj_r_squared = sapply(uni_models, function(m) summary(m)$adj.r.squared)
+)
+
+uni_results
+```
+
+From the chart, we find that none of the covariates on its own is statistically significant
+ (alpha=0.05).  Most predictors have extremely small \(R^2\) values, indicating that each 
+ variable alone explains almost none of the variation in burned area. The only variable 
+ close to marginal significance is `ISI`, with a p-value around 0.0705, but it is still
+ not significant. And `ISI` itself is actually a combination of `wind` and other indicators.
+
+### Categorical Exploratory Analysis
+
+We also examine the categorical variables `month` and `day`. Instead of immediately fitting
+ a regression model with dummy variables, we first calculate the group-level sample size and
+  average burned area. This helps us understand whether certain months or weekdays are 
+  associated with larger observed fire areas.
+
+```{r}
+# to get the right sequence
+df$month = factor(
+  df$month,
+  levels = c("jan", "feb", "mar", "apr", "may", "jun",
+             "jul", "aug", "sep", "oct", "nov", "dec")
+)
+
+df$day = factor(
+  df$day,
+  levels = c("mon", "tue", "wed", "thu", "fri", "sat", "sun")
+)
+```
+
+```{r}
+month_counts = table(df$month)
+
+barplot(
+  month_counts,
+  main = "Frequency of Observations by Month",
+  xlab = "Month",
+  ylab = "Count"
+)
+```
+
+From this plot, we can see that Auguest and September is the peak season of forest
+ fire, which aligns to our guess. 
+```{r}
+day_counts = table(df$day)
+
+barplot(
+  day_counts,
+  main = "Frequency of Observations by Day",
+  xlab = "Day",
+  ylab = "Count"
+)
+```
+
+Though might not be significant, we can see that weekends, including Friday have a
+ higher chance of fire. We guess that this might be related to human activities,
+ as tourist might be a significant reason of forest fire.
+```{r}
+boxplot(
+  log_area ~ month,
+  data = df,
+  xlab = "Month",
+  ylab = "log(area)",
+  main = "Distribution of log(area) by Month"
+)
+```
+
+```{r}
+boxplot(
+  log_area ~ day,
+  data = df,
+  xlab = "Day",
+  ylab = "log(area)",
+  main = "Distribution of log(area) by Day"
+)
+```
+
+Different from our observation of frequence, the distribution of area by month
+ seems to be quite average. But we can see some trends that weekends seem to have
+ larger, fire area than weekdays.
+
+## Basic Model
+
+### OLS and tests
+
+```{r}
+# We preserve only quantitative covariates at this stage
+
+df_quant = subset(df, select = -c(month, day, log_area)) # we cannot use transformation here
+
+ols_model = lm(area ~ ., data = df_quant)
+summary(ols_model)
+```
+
+We notice that none of the covariates is statistically significant at the 5% level
+ at this stage, and the adjusted \(R^2\) is very low.
+
+Our required linear constrains to test is 
+$$
+H_0:50\beta_{DHC}+10\beta_{RH}=3\beta_{lSl}+12\beta_{temp}=3.
+$$
+
+```{r}
+constraints <- c("50*DC + 10*RH = 3", 
+                 "6*ISI + 12*temp = 3")
+f_linear_constrain_test <- linearHypothesis(ols_model, constraints, test = "F")
+print(f_linear_constrain_test)
+
+wald_linear_constrain_test <- linearHypothesis(ols_model, constraints, test = "Chisq")
+print(wald_linear_constrain_test)
+```
+
+The exact F test gives a p-value of 0.1527, and the asymptotic Wald test gives
+ a p-value of 0.1506. Both tests lead to the same conclusion: we fail to reject 
+ the null hypothesis at the 5% significance level. In other words, the data do 
+ not provide sufficient evidence against the two proposed linear constraints.
+
+The chi-square statistic is approximately twice the F statistic because the Wald
+ statistic uses the number of restrictions as the scaling factor. In this case, 
+ there are \(q = 2\) restrictions, so \(3.786 \approx 2 \times 1.893\). The small 
+ difference in p-values comes from the fact that the exact F test uses an 
+ \(F_{2,260}\) reference distribution, while the Wald test uses an asymptotic 
+ \(\chi^2_2\) reference distribution.
+
+The score test and likelihood ratio test are also commonly used asymptotic tests 
+for model restrictions. Conceptually, the Wald test evaluates how far the 
+unrestricted estimates are from satisfying the null constraints, while the score 
+test evaluates the slope of the likelihood at the restricted estimate. The 
+likelihood ratio test compares the fit of the unrestricted and restricted 
+models directly.
+
+## Heteroscedasticity
+
+OLS standard errors rely on the homoscedasticity assumption. Therefore, we first examine
+ the residual-versus-fitted plot and then use formal heteroscedasticity tests to verify 
+ the visual evidence.
+```{r}
+plot(ols_model, which = 1)
+```
+
+The residual-versus-fitted plot shows that the basic OLS model with the original response
+ variable `area` is not ideal. Most residuals are concentrated near zero, while a few 
+ observations have extremely large positive residuals. In addition, the fitted values 
+ include negative values, which is not reasonable for burned area because `area` is 
+ nonnegative by definition. So we would like to take a look of transformed model first.
+
+```{r}
+trans_model = lm(log(area)~ ., df_quant)
+plot(trans_model, which = 1)
+```
+
+```{r}
+bptest(ols_model)
+bptest(trans_model)
+```
+
+We then apply the studentized Breusch-Pagan test to both the original OLS model and the transformed model.
+
+For the original model, the p-value is 0.7981, so we fail to reject the null hypothesis of homoscedasticity.
+ For the transformed model, the p-value is 0.1091, which is still larger than 0.05. Therefore, we also fail 
+ to reject the null hypothesis of homoscedasticity for the transformed model.
+
+In conclusion, the Breusch-Pagan test does not provide significant evidence of heteroscedasticity in either 
+model. Therefore, there is no strong statistical evidence that heteroscedasticity is the main issue in this 
+stage. However, the residual plots still show outliers and a less satisfactory residual pattern for the 
+original response model, so we continue to report robust standard errors as a sensitivity check.
+
+### Robust Standard Errors
+
+```{r}
+se_ols <- sqrt(diag(vcov(ols_model)))
+se_hc3 <- sqrt(diag(vcovHC(ols_model, type = "HC3")))
+
+compare_se <- data.frame(
+  Variable = names(se_ols),
+  OLS_SE = se_ols,
+  HC3_SE = se_hc3
+  )
+
+print(compare_se)
+```
+In this model, the HC3 robust standard errors are smaller than the conventional OLS standard errors for most coefficients.
+
+```{r}
+robust_t_test <- coeftest(ols_model, vcov = vcovHC(ols_model, type = "HC3"))
+print(robust_t_test)
+summary(ols_model)
+```
+
+The robust t test shows a even better result, though none of the covariates are statistical significant.
+
+```{r}
+robust_ci <- coefci(ols_model, vcov = vcovHC(ols_model, type = "HC3"), level = 0.95)
+print("---hc3 vcov---")
+print(robust_ci)
+ols_ci <- confint(ols_model, level = 0.95)
+print("---ols(hc0) vcov---")
+print(ols_ci)
+```
+
+Similarly, the 95% robust CIs are smaller than the CIs from OLS.
+
+### Iteratively Reweighted Least Squares
+
+```{r}
+# IRLS with residual variance modeled as a function of temp
+
+irls_model = ols_model
+residuals_irls = irls_model$residuals
+
+w = rep(1, nrow(df_quant))
+err = Inf
+tol = 1e-10
+niter = 0
+maxiter = 1e3
+
+while (err > tol & niter < maxiter)
+{
+  
+  aux = lm(log(residuals_irls^2) ~ log(temp), df_quant)
+  err = sum(abs(w - exp(-aux$fitted.values))) / sum(w)
+  w = exp(-aux$fitted.values)
+  WLS = lm(area ~ ., df_quant, weights = w)
+  residuals_irls = WLS$residuals
+  niter = niter + 1
+  
+}
+
+summary(aux)
+summary(WLS)
+```
+
+```{r}
+gamma_hat = coef(aux_model)
+
+alpha_0_hat = exp(gamma_hat[1])
+alpha_1_hat = gamma_hat[2]
+
+alpha_0_hat
+alpha_1_hat
+
+cat(
+  paste0(
+    "Estimated residual variance equation: sigma_i^2 = ",
+    round(alpha_0_hat, 4),
+    " * temp_i^",
+    round(alpha_1_hat, 4)
+  )
+)
+```
+
+```{r}
+ols_summary = summary(ols_model)
+irls_summary = summary(irls_model)
+
+compare_ols_irls = data.frame(
+  Variable = names(coef(ols_model)),
+  OLS_Estimate = coef(ols_model),
+  OLS_SE = ols_summary$coefficients[, "Std. Error"],
+  OLS_t = ols_summary$coefficients[, "t value"],
+  OLS_p_value = ols_summary$coefficients[, "Pr(>|t|)"],
+  IRLS_Estimate = coef(irls_model),
+  IRLS_SE = irls_summary$coefficients[, "Std. Error"],
+  IRLS_t = irls_summary$coefficients[, "t value"],
+  IRLS_p_value = irls_summary$coefficients[, "Pr(>|t|)"]
+)
+
+print(compare_ols_irls)
+```
+
+```{r}
+ols_ci = confint(ols_model, level = 0.95)
+irls_ci = confint(irls_model, level = 0.95)
+
+print("--- OLS 95% CI ---")
+print(ols_ci)
+
+print("--- IRLS/WLS 95% CI ---")
+print(irls_ci)
+```
+
+```{r}
+summary(w)
+```
+
+Compared with OLS, the IRLS estimates change substantially for several coefficients.
+ For example, the coefficient of `temp` decreases from 1.1524 under OLS to 0.1311 
+ under IRLS, and the coefficient of `wind` changes from 2.5191 to -0.1492. The standard
+ errors are also generally smaller under IRLS. However, the inferential conclusion remains
+the same: none of the covariates is statistically significant at the 5% level.
+
+The confidence intervals from IRLS are generally narrower than the OLS confidence intervals.
+ For example, the 95% CI for `temp` changes from \([-1.6071, 3.9118]\) under OLS to 
+ \([-0.9781, 1.2402]\) under IRLS. Similarly, the 95% CI for `wind` changes from 
+ \([-3.6896, 8.7279]\) under OLS to \([-2.5885, 2.2900]\) under IRLS. Even though 
+ the IRLS intervals are narrower, they still contain zero for every covariate.

@@ -1,0 +1,108 @@
+```{r}
+setwd("C:/Users/jiang/OneDrive/Documents/R/finalProject4030/Forest-Fires-Data-Set-Portugal")
+
+library(car)
+library(lmtest)
+library(skedastic)
+library(sandwich)
+```
+
+```{r}
+df = read.table("fire.txt", header = TRUE)
+
+df_trans = df
+
+df_trans$month = factor(df_trans$month)
+df_trans$day = factor(df_trans$day)
+df_trans$log_area = log(df_trans$area)
+
+```
+
+```{r}
+df_inter = df_trans[, c(
+  "log_area", "day", "month",
+  "X", "Y", "FFMC", "DMC", "DC", "ISI", "temp", "RH", "wind"
+)]
+
+summary(df_inter)
+```
+
+First, we test the interaction of day with other covariates, expect month. We have 200 degrees of freedom in this model.
+
+```{r}
+fit_day_inter = lm(
+  log_area ~ day * (X + Y + FFMC + DMC + DC + ISI + temp + RH + wind),
+  data = df_inter
+)
+
+summary(fit_day_inter)
+anova(fit_day_inter)
+```
+
+We don't expect anything to be significant, as it is very hard to explain in real life, but we follow the steps first.
+Here, at the first few steps, we find that day:DMC is still close to be significant, so we don't think is proper to drop `DMC`.
+```{r}
+fit_day_inter = update(fit_day_inter, . ~ . - day:FFMC)
+anova(fit_day_inter)
+```
+```{r}
+fit_day_inter = update(fit_day_inter, . ~ . - day:temp)
+anova(fit_day_inter)
+```
+```{r}
+fit_day_inter = update(fit_day_inter, . ~ . - temp)
+anova(fit_day_inter)
+```
+```{r}
+fit_day_inter = update(fit_day_inter, . ~ . - day:RH)
+anova(fit_day_inter)
+```
+```{r}
+fit_day_inter = update(fit_day_inter, . ~ . - FFMC)
+anova(fit_day_inter)
+```
+```{r}
+fit_day_inter = update(fit_day_inter, . ~ . - day:DC)
+anova(fit_day_inter)
+```
+```{r}
+fit_day_inter = update(fit_day_inter, . ~ . - day:wind)
+anova(fit_day_inter)
+```
+```{r}
+fit_day_inter = update(fit_day_inter, . ~ . - DC)
+anova(fit_day_inter)
+```
+```{r}
+fit_day_inter = update(fit_day_inter, . ~ . - day:Y)
+anova(fit_day_inter)
+```
+```{r}
+fit_day_inter = update(fit_day_inter, . ~ . - Y)
+anova(fit_day_inter)
+```
+```{r}
+fit_day_inter = update(fit_day_inter, . ~ . - day:X)
+anova(fit_day_inter)
+```
+```{r}
+fit_day_inter = update(fit_day_inter, . ~ . - X)
+anova(fit_day_inter)
+```
+```{r}
+fit_day_inter = update(fit_day_inter, . ~ . - day:ISI)
+anova(fit_day_inter)
+```
+```{r}
+fit_day_inter = update(fit_day_inter, . ~ . - RH)
+anova(fit_day_inter)
+```
+```{r}
+fit_day_inter = update(fit_day_inter, . ~ . - wind)
+anova(fit_day_inter)
+```
+If we set the significant level as 0.05, we will remove all covariates. 
+And if we set alpha=1, we will reach to 4 left: `day`,`DMC`.`ISI`,`day:DMC`, and last two are significant,
+though this interaction effect is very hard to explain.
+
+We also test interaction effects of month, yet nothing is significant.
