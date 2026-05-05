@@ -11,6 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r}
 library(car);library(lmtest);library(skedastic);library(sandwich);
+setwd("C:/Users/jiang/OneDrive/Documents/R/finalProject4030/Forest-Fires-Data-Set-Portugal")
 ```
 
 ## Introduction to "Fire"
@@ -58,12 +59,19 @@ wald_test <- linearHypothesis(ols_model, constraints, test = "Chisq")
 print(wald_test)
 ```
 
-The results from Exact F test and Asymptomatic Wald test agree each other and show that we cannot reject the null hypothesis. The Chisq statistic is about two times of F statistic, as the two has a difference of 2 degrees of freedom. Score test and LR test are both asymptomatic test, and similar to Wald test. The only difference between Wald test and Score test is the variance they use.
+The results from Exact F test and Asymptomatic Wald test agree each other and show 
+ that we cannot reject the null hypothesis. The Chisq statistic is about two times of F 
+ statistic, as the two has a difference of 2 degrees of freedom. Score test and LR test 
+ are both asymptomatic test, and similar to Wald test. The only difference between Wald
+ test and Score test is the variance they use.
 
 ### Heteroscedasticity
 
-We need homoscedasticity to calculate a valid OLS SE, so we can plot a scatter plot to watch it, or use BP test as well. We found out a easier way to draw the residual plots by <https://rpubs.com/sharmaar3/Residual_Plots>.
+## Heteroscedasticity
 
+OLS standard errors rely on the homoscedasticity assumption. Therefore, we first examine
+ the residual-versus-fitted plot and then use formal heteroscedasticity tests to verify 
+ the visual evidence.
 ```{r}
 plot(ols_model, which = 1)
 ```
@@ -133,6 +141,10 @@ print(ols_ci)
 Similarly, the 95% robust CIs are smaller than the CIs from OLS.
 
 ### Iteratively Reweighted Least Squares
+
+```{r}
+
+```
 
 ## Bootstrap
 
@@ -298,39 +310,25 @@ Transformation is vital for our data.
 ```{r}
 library(MASS)
 
-bc <- boxcox(lm(area ~ + 1., data = df_quant), 
-             lambda = seq(-2, 2, 0.1), plotit = TRUE)
+df_quant_clean <- subset(df, select = -c(month, day))
+
+bc_model <- lm(area ~ X + Y + FFMC + DMC + DC + ISI + temp + RH + wind,
+               data = df_quant_clean)
+
+bc <- boxcox(bc_model,
+             lambda = seq(-2, 2, by = 0.01),
+             plotit = TRUE)
 
 best_lambda <- bc$x[which.max(bc$y)]
-
-if (abs(best_lambda) < 0.1) {
-  df_quant$trans_area <- log(df_quant$area + 1)
-} else {
-  df_quant$trans_area <- ((df_quant$area + 1)^best_lambda - 1) / best_lambda
-}
 print(best_lambda)
 ```
 
 Thus, we can use the log transformation to `area` .
 
-Besides, we understand that the area is strictly larger than 0, so it is better to do the lm transformation without adding 1.
-Using just the log transformation will result in a higher R-squared and significantly higher adjusted R-squared to 0.3% instead of 0.08%.
+Because the area in this data set is strictly larger than 0, `log(area)` is enough and make more sense in this situation. We also test the r-squared and adjusted r-squared, though both are small, but log transform is better.
 
 ```{r}
-bc <- boxcox(lm(area ~ + 1., data = df_quant),
-             lambda = seq(-2, 2, 0.1), plotit = TRUE)
-
-best_lambda <- bc$x[which.max(bc$y)]
-
-if (abs(best_lambda) < 0.1) {
-  df_quant$trans_area <- log(df_quant$area)
-} else {
-  df_quant$trans_area <- ((df_quant$area)^best_lambda - 1) / best_lambda
-}
-print(best_lambda)
-```
-
-```{r}
+df_quant$trans_area = log(df_quant$area)
 hist(df_quant$trans_area)
 ```
 
@@ -338,4 +336,124 @@ hist(df_quant$trans_area)
 ols_trans <- lm(trans_area ~ . - area, data = df_quant)
 summary(ols_trans)
 plot(ols_trans, which = 1)
+```
+
+```{r}
+df_quant$trans_area = log(df_quant$area)
+ols_log = lm(trans_area ~ . - area, data = df_quant)
+
+df_quant$trans_area = log1p(df_quant$area)
+ols_log1p = lm(trans_area ~ . - area, data = df_quant)
+
+compare = data.frame(
+  model = c("log", "log1p"),
+  n = c(nobs(ols_log), nobs(ols_log1p)),
+  p = c(length(coef(ols_log)) - 1, length(coef(ols_log1p)) - 1),
+  r2 = c(summary(ols_log)$r.squared, summary(ols_log1p)$r.squared),
+  adj_r2 = c(summary(ols_log)$adj.r.squared, summary(ols_log1p)$adj.r.squared)
+)
+
+compare
+```
+
+### Transformation of Covariates
+
+The fire weather variables `DMC`, `DC`, and `ISI` are positive indexes and can be highly right-skewed. The wind speed is also positive. Therefore, we use `log1p()` for these covariates, because it keeps the transformation stable even if a future data set contains zeros. For `FFMC`, most observations are close to the upper bound 100, so we use the log distance from the upper bound.
+
+```{r}
+df$month <- factor(df$month,
+                   levels = c("jan", "feb", "mar", "apr", "may", "jun",
+                              "jul", "aug", "sep", "oct", "nov", "dec"),
+                   ordered = TRUE)
+
+df$day <- factor(df$day,
+                 levels = c("mon", "tue", "wed", "thu", "fri", "sat", "sun"),
+                 ordered = TRUE)
+
+num_vars <- names(df)[sapply(df, is.numeric)]
+cat_vars <- names(df)[!sapply(df, is.numeric)]
+```
+
+```{r}
+par(mfrow = c(3, 4), mar = c(4, 4, 3, 1))
+
+for (v in num_vars) {
+  hist(df[[v]],
+       main = v,
+       xlab = v,
+       col = "lightgray",
+       border = "black")
+}
+```
+
+```{r}
+par(mfrow = c(1, length(cat_vars)), mar = c(6, 4, 3, 1))
+
+for (v in cat_vars) {
+  barplot(table(df[[v]]),
+          main = v,
+          ylab = "Frequency",
+          col = "lightgray",
+          border = "black",
+          las = 2)
+}
+```
+
+From the plots, we think transformation for covariates might not be meaningful.
+
+```{r}
+library(qqconf)
+
+r = rstandard(ols_trans)
+
+qq_conf_plot(r, points_params = list(pch = 16, cex = 0.5))
+```
+
+Since all standardized residuals appear to fall within the 95% simultaneous confidence bands, we fail to reject the global null hypothesis of normality. Thus, the standardized residuals from the transformed linear model are reasonably consistent with a standard normal distribution.
+
+
+### Interaction Effects
+
+```{r}
+qvar = "month"
+
+df_trans[[qvar]] = factor(df_trans[[qvar]])
+df_trans[[qvar]] = droplevels(df_trans[[qvar]])
+
+additive_formula = as.formula(
+  paste("log_area ~ X + Y + FFMC + DMC + DC + ISI + temp + RH + wind +", qvar)
+)
+
+interaction_formula = as.formula(
+  paste("log_area ~ (X + Y + FFMC + DMC + DC + ISI + temp + RH + wind) *", qvar)
+)
+
+additive_model = lm(additive_formula, data = df_trans)
+interaction_model = lm(interaction_formula, data = df_trans)
+
+anova(additive_model, interaction_model)
+summary(interaction_model)
+```
+
+The full interaction model using month creates a large number of interaction terms. Several coefficients are not estimable because of singularities, suggesting that the month-level interaction model is overparameterized. Therefore, we combine months into broader fire-season categories and investigate interaction effects using this simplified qualitative covariate.
+
+```{r}
+df_trans$fire_season = ifelse(df_trans$month %in% c("jul", "aug", "sep"),
+                              "Peak",
+                              "OffPeak")
+
+df_trans$fire_season = factor(df_trans$fire_season)
+table(df_trans$fire_season)
+```
+```{r}
+additive_model = lm(log_area ~ X + Y + FFMC + DMC + DC + ISI + temp + RH + wind + fire_season,
+                    data = df_trans)
+summary(additive_model)
+
+interaction_model = lm(log_area ~ (X + Y + FFMC + DMC + DC + ISI + temp + RH + wind) * fire_season,
+                       data = df_trans)
+summary(interaction_model)
+
+interaction_test = anova(additive_model, interaction_model)
+print(interaction_test)
 ```

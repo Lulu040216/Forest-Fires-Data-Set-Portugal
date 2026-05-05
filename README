@@ -1,1 +1,3 @@
 Developed as the final project for Statistics for Data Science II (SDS 4030) under the instruction of Professor Bill Katsianos at Washington University in St. Louis.
+
+In this project, we notice that using linear model to predict the fire area is nearly impossible, as the R-squared is less than 1 percent in most cases. We tried our best to find correlation between the response covariates and the variables we have.
