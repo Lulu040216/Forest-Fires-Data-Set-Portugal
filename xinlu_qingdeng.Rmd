@@ -874,8 +874,6 @@ We also test interaction effects of month, yet nothing is significant.
 ## Mixed effect model 
 
 ```{r}
-
-
 library(lme4)
 
 df_mixed = df
@@ -969,23 +967,54 @@ From the ICC results, we can see that the random effects explain almost none of 
 ## model selection 
 
 ```{r}
+set.seed(0)
 
-fit_full = lm(log_area ~ X + Y + FFMC + DMC + DC + ISI + temp + RH + wind, data = df_trans)
+df_selection = df
+df_selection$log_area = log(df_selection$area)
 
-summary(fit_full)
+Y = df_selection$log_area
+
+X = df_selection[, c("X", "Y", "FFMC", "DMC", "DC", "ISI", "temp", "RH", "wind")]
+
+names(X)[names(X) == "X"] = "coord_X"
+names(X)[names(X) == "Y"] = "coord_Y"
+
+n = dim(X)[1]
+P = dim(X)[2]
+
+train = sample(n, 0.6 * n)
+valid = sample(setdiff(1:n, train), 0.2 * n)
+test = setdiff(1:n, c(train, valid))
+
+MSPE = numeric(P)
 ```
-
 ```{r}
+for (p in P:1)
+{
+  fit = lm(Y ~ ., X[, 1:p, drop = FALSE], train)
+  predictions = predict(fit, X[valid, 1:p, drop = FALSE])
+  MSPE[p] = mean((Y[valid] - predictions)^2)
+  ind = which.max(summary(fit)$coefficients[-1, 4])
+  if (ind != p)
+  {
+    X[, c(ind, p)] = X[, c(p, ind)]
+    names(X)[c(ind, p)] = names(X)[c(p, ind)]
+  }
+}
 
-fit_selected = step(fit_full, direction = "backward")
+plot(MSPE,type = "b",pch = 16,lwd = 4,ylab = "Mean Squared Prediction Error")
+p = which.min(MSPE)
+p
 
-summary(fit_selected)
+fit = lm(Y ~ ., X[, 1:p, drop = FALSE], test)
+
+summary(fit)
 ```
-After removing all random effects, we fit a full linear regression model with all predictors and then applied backward selection using AIC. From the step-by-step output, we can see that variables like FFMC, temp, X, Y, and DC were gradually removed because dropping them lowered the AIC, meaning they were not helping the model fit. The process stopped at the model with the lowest AIC (229.16), which includes DMC, ISI, RH, and wind.
+Overall, this model selection result is a little disappointing, but it is still informative. The procedure selected ISI because the one-covariate model had the lowest validation MSPE. However, after refitting this selected model on the test set, ISI is clearly not significant. Its p-value is 0.499, and the confidence interval includes zero.
 
-Looking at the final model output, only ISI is statistically significant (p = 0.014), while DMC, RH, and wind are not significant at the 0.05 level. This suggests that ISI has some relationship with the log of burned area, but overall the effects are still pretty weak. The R-squared is only about 0.03, which is extremely low, meaning the model explains almost none of the variation in fire size. The overall F-test also has a p-value around 0.085, which is not strongly significant, so even the model as a whole is not very convincing.
+So the main takeaway is that model selection did pick one variable, but valid post-selection inference does not support it as a meaningful predictor. In other words, ISI may look relatively useful during the selection process, but it does not hold up on the test set. The model also has very weak explanatory power, since the adjusted \(R^2\) is negative and the overall F-test is not significant.
 
-So overall, even after model selection, we still can’t make strong inferences about fire size using these predictors. The main takeaway is that only ISI shows some signal, but the dataset is still very noisy and most of the variation in fire area is coming from factors that are not included in the model.
+This again supports the same conclusion we saw earlier: the burned area variable is difficult to explain with the available covariates. Even after using a model selection method, we still do not get a strong or reliable linear model for \(\log(area)\).
 
 ## collinearity  
 
@@ -1146,6 +1175,23 @@ summary(fit_full)
 anova(fit_full)
 ```
 
+```{r}
+alpha = 0.05
+
+pvalues = summary(fit_full)$coefficients[-1, "Pr(>|t|)"]
+m = length(pvalues)
+
+# Lecture 34: Testing Global Null
+Bonf = min(pvalues)
+print(Bonf < alpha / m)
+
+Fisher = -2 * sum(log(pvalues))
+print(Fisher > qchisq(1 - alpha, 2 * m))
+
+Simes = sum(pvalues[order(pvalues)] <= (1:m) * alpha / m)
+print(Simes > 0)
+```
+
 We fit a full multiple linear regression model using all available quantitative and qualitative covariates to explain log_area. To check whether at least one variable has a significant effect, we use the global F-test from the model summary. The p-value for the F-test is about 0.0805, which is greater than 0.05, so we fail to reject the null hypothesis at the 5% level. This means that overall, the model does not provide strong evidence that at least one predictor is statistically significant, although it is kind of borderline at the 10% level.
 
 Looking at the individual coefficients, we can see that DMC is highly significant and DC is also significant, which suggests that some predictors do have effects on log_area when considered individually. However, the global test is more strict since it tests all variables together, and the overall result is still not strong enough to be considered significant at the 0.05 level.
@@ -1153,6 +1199,11 @@ Looking at the individual coefficients, we can see that DMC is highly significan
 We also compare this with the ANOVA table, which provides another way to assess significance. The ANOVA results show that the variable month is statistically significant (p = 0.0277), while most other variables are not. So unlike the global F-test, the ANOVA suggests that at least one variable (month) does have a significant effect.
 
 Overall, the two methods give slightly different conclusions. The global F-test suggests no strong overall significance, while the ANOVA highlights that certain variables like month may still be important. This difference happens because the global test evaluates all variables together, while ANOVA looks at each variable’s contribution separately.
+
+**add 3 more tests, this write up need fix!** The Bonferroni global test rejects the global null hypothesis because the smallest p-value is smaller than alpha divided by the number of tests. The Simes test also rejects the global null hypothesis, since at least one ordered p-value is smaller than its corresponding Simes threshold. However, Fisher's combination test does not reject the global null hypothesis.
+
+These results do not fully agree because the three methods aggregate evidence differently. Bonferroni and Simes can reject the global null when there is at least one sufficiently small p-value. Fisher's method combines evidence across all p-values, so it is more sensitive when several effects show moderate evidence at the same time. In our case, the results suggest that the evidence against the global null is mainly driven by one or a small number of strong individual effects, rather than by broad evidence across many effects.
+
 
 ## Multiple testing methods 
 ```{r}
@@ -1174,6 +1225,9 @@ HB = p.adjust(pvalues, "holm")
 
 ## Benjamini-Hochberg (FDR control)
 BH = p.adjust(pvalues, "BH")
+
+## Benjamini-Yekutieli procedure
+BY = p.adjust(pvalues, "BY")
 ```
 
 
@@ -1182,10 +1236,11 @@ testing_table = data.frame(
   Effect = names(pvalues),
   No_Correction = No_Correction,
   Holm_Bonferroni = HB,
-  Benjamini_Hochberg = BH
+  Benjamini_Hochberg = BH,
+  Benjamini_Yekutieli = BY
 )
 
-testing_table[,2:4] = round(testing_table[,2:4], 4)
+testing_table[,2:5] = round(testing_table[,2:5], 4)
 
 print(testing_table)
 ```
@@ -1196,6 +1251,7 @@ From the table, we can see how the significance of variables changes once we app
 sum(No_Correction < alpha)
 sum(HB < alpha)
 sum(BH < alpha)
+sum(BY < alpha)
 ```
 
 From the results, we can see that without any correction there are 2 variables that appear statistically significant at the 5% level. However, after applying the Holm-Bonferroni method, only 1 variable remains significant, and the same happens for the Benjamini-Hochberg method. This shows that once we control for multiple testing, some of the originally “significant” results were likely false positives. The Holm method is more conservative since it controls the probability of making any Type I error, while BH controls the proportion of false discoveries, but in this case both methods agree and reduce the number of significant variables to just one. Overall, this suggests that the evidence for most predictors is weak, and only one variable has a reliable effect on the response after accounting for multiple comparisons.
