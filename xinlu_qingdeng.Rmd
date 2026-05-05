@@ -1211,3 +1211,4 @@ Collinearity was observed in the scatterplot matrix (especially among variables 
 For hypothesis testing, we used global F-tests, likelihood-based methods, and permutation-style reasoning earlier, and results consistently showed weak overall significance (e.g., global p-value ≈ 0.08). Multiple testing corrections further confirmed that most variables are not significant once we control for false positives.
 
 Overall, the final model should be a log-linear model with a small set of predictors (primarily DMC, with cautious inclusion of ISI), no random effects, and inference based on robust SEs, bootstrap methods, and multiple testing corrections. Even after all adjustments, the model has very low explanatory power (adjusted R² ≈ 0.016), meaning that most of the variation in fire size is still unexplained (only explain 1.6% of variation in log_area), likely due to missing important variables or the inherently unpredictable nature of wildfire behavior.
+
