@@ -10,7 +10,6 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r}
-setwd("C:/Users/jiang/OneDrive/Documents/R/finalProject4030/Forest-Fires-Data-Set-Portugal")
 library(car)
 library(lmtest)
 library(skedastic)
@@ -77,6 +76,23 @@ From the chart, we find that none of the covariates on its own is statistically 
  variable alone explains almost none of the variation in burned area. The only variable 
  close to marginal significance is `ISI`, with a p-value around 0.0705, but it is still
  not significant. And `ISI` itself is actually a combination of `wind` and other indicators.
+
+```{r}
+quant_vars = c("X", "Y", "FFMC", "DMC", "DC", "ISI", 
+               "temp", "RH", "wind", "area")
+
+for (var in quant_vars) {
+  hist(df[[var]],
+       breaks = "FD",
+       main = paste("Histogram of", var),
+       xlab = var)
+}
+
+```
+
+```{r}
+hist((df$FFMC)**2)
+```
 
 ### Categorical Exploratory Analysis
 
@@ -302,7 +318,7 @@ summary(WLS)
 ```
 
 ```{r}
-gamma_hat = coef(aux_model)
+gamma_hat = coef(aux)
 
 alpha_0_hat = exp(gamma_hat[1])
 alpha_1_hat = gamma_hat[2]

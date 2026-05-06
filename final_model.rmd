@@ -1,0 +1,155 @@
+### Final Model and Valid Inference
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Final model construction
+
+library(sandwich)
+library(lmtest)
+
+df = read.table("fire.txt", header = TRUE)
+df_final = df
+
+# Response transformation
+df_final$log_area = log(df_final$area)
+
+# Rename coordinates to avoid confusion with model matrix notation
+names(df_final)[names(df_final) == "X"] = "coord_X"
+names(df_final)[names(df_final) == "Y"] = "coord_Y"
+
+# Make qualitative variables factors
+df_final$month = factor(df_final$month)
+df_final$day = factor(df_final$day)
+
+```
+
+```{r}
+final_model = lm(
+  log_area ~ ISI + day * DMC,
+  data = df_final
+)
+
+summary(final_model)
+```
+
+In our final model, we use the result from model selection and interaction effect tests, the final model is:
+$$
+\log(\text{area}_i)
+=
+\beta_0
++
+\beta_1 \text{ISI}_i
++
+\beta_2 \text{DMC}_i
++
+\sum_{d \neq \text{fri}} \gamma_d I(\text{day}_i=d)
++
+\sum_{d \neq \text{fri}} \delta_d I(\text{day}_i=d)\text{DMC}_i
++
+\varepsilon_i.
+$$
+
+The model retains `ISI` because it was selected by the model selection procedure, and it retains the `day:DMC` interaction because the interaction analysis suggested that the association between `DMC` and log fire area may vary by day of the week. Friday is the reference day. Therefore, the coefficient of `DMC` represents the slope of `DMC` on Friday, while each `day:DMC` coefficient represents the difference between that day's `DMC` slope and the Friday slope.The fitted model has a multiple \(R^2\) of \(0.0854\) and an adjusted \(R^2\) of \(0.0352\), so the explanatory power is weak. The overall F-test gives \(p = 0.0556\), which is slightly above the 5% level and close to marginal significance at the 10% level. Among the individual coefficients, `ISI` is significant at the 5% level with an estimated coefficient of \(-0.0576\) and \(p = 0.0249\). This suggests that, holding the other terms fixed, higher `ISI` is associated with smaller expected log fire area. The `daymon:DMC` interaction is marginally significant with \(p = 0.0524\), giving weak evidence that the effect of `DMC` on log fire area may differ on Monday relative to Friday. Most other day effects and interaction effects are not individually significant.Overall, the final model gives only weak evidence of systematic association, but it is still a defensible final inferential model because it incorporates the main variable selected by model selection and the interaction structure identified earlier.
+
+In the previous heteroscedasticity analysis, we did not find strong evidence of non-constant variance. However, because the response distribution is skewed and the model assumptions are not perfect, nonparametric bootstrap confidence intervals provide a more robust check of coefficient uncertainty.
+
+```{r}
+set.seed(0)
+
+nboot = 10000
+n = nrow(df_final)
+
+coef_names = names(coef(final_model))
+boot_coef = matrix(NA, nboot, length(coef_names))
+colnames(boot_coef) = coef_names
+
+for (b in 1:nboot) {
+  boot_index = sample(1:n, replace = TRUE)
+  boot_fit = lm(
+    log_area ~ ISI + day * DMC,
+    data = df_final[boot_index, ]
+  )
+  
+  boot_coef[b, names(coef(boot_fit))] = coef(boot_fit)
+}
+
+boot_SE = apply(boot_coef, 2, sd, na.rm = TRUE)
+
+boot_CI = apply(
+  boot_coef,
+  2,
+  quantile,
+  probs = c(0.025, 0.975),
+  na.rm = TRUE
+)
+
+boot_summary = data.frame(
+  Estimate = coef(final_model),
+  Bootstrap_SE = boot_SE,
+  Bootstrap_Lower = boot_CI[1, ],
+  Bootstrap_Upper = boot_CI[2, ]
+)
+
+boot_summary
+```
+
+The bootstrap results provide stronger evidence than the ordinary OLS summary for several effects. In particular, the 95% bootstrap confidence intervals for `ISI`, `daymon`, `daysat`, and `daymon:DMC` do not contain zero. The interval for `ISI` is \([-0.1090,-0.0061]\), indicating a negative association between `ISI` and expected log fire area. The intervals for `daymon` and `daysat` are \([0.0573,2.3413]\) and \([0.0761,2.5290]\), respectively, suggesting higher expected log fire area on Monday and Saturday relative to Friday when `DMC = 0`. The interval for `daymon:DMC` is \([-0.0198,-0.0018]\), suggesting that the slope of `DMC` is lower on Monday than on Friday.
+
+However, the day main effects should be interpreted carefully because they compare days when `DMC = 0`. The more meaningful result is the interaction term, which indicates that the relationship between `DMC` and log fire area may differ by day.
+
+```{r}
+# Permutation F test for overall significance of the final model
+
+set.seed(0)
+
+Y = df_final$log_area
+nperm = 10000
+
+f_obs = summary(final_model)$fstatistic[1]
+
+f_perm = numeric(nperm)
+
+for (k in 1:nperm) {
+  df_perm = df_final
+  df_perm$log_area = sample(Y)
+  
+  perm_fit = lm(
+    log_area ~ ISI + day * DMC,
+    data = df_perm
+  )
+  
+  f_perm[k] = summary(perm_fit)$fstatistic[1]
+}
+
+perm_pvalue = (1 + sum(f_perm >= f_obs)) / (1 + nperm)
+
+f_obs
+perm_pvalue
+```
+
+The result is very close to significance at the 5% level. The permutation p-value is \(0.0528\), while the ordinary theoretical F-test p-value is \(0.0556\). Since both are just above \(0.05\), I would describe the result as marginally significant rather than formally significant. This suggests that the final model contains some evidence of association with `log_area`, but the evidence is still weak.
+
+```{r}
+# Multiple testing correction
+
+raw_pvalues = summary(final_model)$coefficients[, "Pr(>|t|)"]
+
+# Exclude intercept
+effect_pvalues = raw_pvalues[names(raw_pvalues) != "(Intercept)"]
+
+multiple_testing_table = data.frame(
+  Effect = names(effect_pvalues),
+  No_Correction = effect_pvalues,
+  Holm_Bonferroni = p.adjust(effect_pvalues, method = "holm"),
+  Benjamini_Hochberg = p.adjust(effect_pvalues, method = "BH")
+)
+
+multiple_testing_table
+```
+
+Overall, the evidence is weak but not meaningless. The global permutation test suggests borderline overall association, and the bootstrap intervals identify several potentially meaningful effects. However, after correcting for multiple testing, no individual coefficient remains significant. Therefore, the final model should be interpreted as providing exploratory evidence of association rather than strong confirmatory evidence.
+
+We also considered a mixed-effects model with a random intercept for `month`. However, the estimated ICC was only \(2.59\%\), suggesting that month-level clustering explains only a small proportion of the remaining variation after accounting for the fixed effects. Therefore, we keep the fixed-effects model as the main final model. In addition, the VIF analysis showed that all VIF values were below 3, so there is no evidence of severe multicollinearity among the quantitative covariates. Therefore, ridge regression is not necessary for the final inferential model.
